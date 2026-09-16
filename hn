@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""hn — Harri's Notes from the terminal.
+
+Stdlib only: no dependencies, no build step. One executable file.
+
+The API token lives in ~/.config/hn/auth.json (mode 600, written by ops) and is
+never passed on a command line, never printed, and never included in an error
+message. Override the location with HN_AUTH_FILE (tests use this).
+
+Read paths are the read endpoints:
+    GET /api/notes?limit=N        -> data.notes[]        (pinned first)
+    GET /api/notes/:id            -> data              (one note)
+    GET /api/tags                 -> data[]            (bare list)
+    GET /api/tags/:id/notes       -> data[]            (notes carrying a tag)
+    GET /api/search?q=            -> data.results[]    (ranked)
+Every response is wrapped: {"success": bool, "data": ..., "meta"?: ...}.
+"""
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+PROG = "hn"
+DEFAULT_AUTH = Path.home() / ".config" / "hn" / "auth.json"
+TIMEOUT = 20
+
+
+class HnError(Exception):
+    """Anything worth showing the user instead of a traceback."""
+
+
+def load_auth(path=None):
+    """Return (base_url, token) from the auth file, checking it is not world-readable."""
+    p = Path(path or os.environ.get("HN_AUTH_FILE") or DEFAULT_AUTH)
+    if not p.exists():
+        raise HnError(
+            f"no auth file at {p}\n"
+            "Run ops's setup script on this machine (it prompts for the token, so the\n"
+            "token never reaches the shell history)."
+        )
+    mode = p.stat().st_mode & 0o777
+    if mode & 0o077:
+        raise HnError(f"{p} is mode {oct(mode)} and holds a token — chmod 600 it")
+    try:
+        d = json.loads(p.read_text())
+    except (OSError, ValueError) as e:
+        raise HnError(f"cannot read {p}: {e}")
+    for key in ("base_url", "token"):
+        if not d.get(key):
+            raise HnError(f"{p} has no {key!r} — re-run ops's setup script")
+    base = d["base_url"].rstrip("/")
+    if not base.startswith(("http://", "https://")):
+        raise HnError(f"{p}: base_url must be an http(s) URL")
+    return base, d["token"]
+
+
+class Client:
+    """HTTP seam. Tests replace .request() (or the whole client), never the network."""
+
+    def __init__(self, base_url, token, timeout=TIMEOUT):
+        self.base_url = base_url
+        self.token = token
+        self.timeout = timeout
+
+    def request(self, method, path, params=None, body=None):
+        url = f"{self.base_url}{path}"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Authorization", f"Bearer {self.token}")
+        req.add_header("Accept", "application/json")
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            raise HnError(self._explain(e.code, e.read().decode("utf-8", "replace"))) from None
+        except urllib.error.URLError as e:
+            raise HnError(f"cannot reach {self.base_url}: {e.reason}") from None
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            raise HnError(f"server sent non-JSON: {raw[:200]}") from None
+        if not payload.get("success", False):
+            raise HnError(payload.get("error") or f"request failed: {raw[:200]}")
+        return payload.get("data")
+
+    @staticmethod
+    def _explain(code, raw):
+        try:
+            msg = json.loads(raw).get("error")
+        except ValueError:
+            msg = raw.strip()[:200]
+        return f"HTTP {code}: {msg or 'request failed'}"
+
+    def get(self, path, params=None):
+        return self.request("GET", path, params=params)
+
+
+# ---------------------------------------------------------------- formatting
+
+def tag_names(note):
+    tags = note.get("tags") or []
+    return [t.get("name") if isinstance(t, dict) else str(t) for t in tags]
+
+
+def one_line(note):
+    tags = tag_names(note)
+    suffix = "  [" + " ".join(tags) + "]" if tags else ""
+    pin = "*" if note.get("is_pinned") else " "
+    return f"{pin}{note.get('id'):>4}  {note.get('title') or '(untitled)'}{suffix}"
+
+
+def show_note(note, raw=False, as_json=False):
+    if as_json:
+        print(json.dumps(note, indent=2, ensure_ascii=False))
+        return
+    content = note.get("content") or ""
+    if raw:
+        sys.stdout.write(content if content.endswith("\n") else content + "\n")
+        return
+    tags = tag_names(note)
+    head = f"#{note.get('id')}  {note.get('title') or '(untitled)'}"
+    if tags:
+        head += "  [" + " ".join(tags) + "]"
+    print(head)
+    when = note.get("updated_at") or "?"
+    print(f"updated {when}" + ("   pinned" if note.get("is_pinned") else ""))
+    print("-" * 72)
+    print(content)
+
+
+def notes_of(client, limit=None):
+    data = client.get("/notes", {"limit": limit} if limit else None)
+    if isinstance(data, dict):
+        return data.get("notes") or []
+    return data or []
+
+
+def all_tags(client):
+    tags = client.get("/tags") or []
+    if isinstance(tags, dict):
+        tags = tags.get("tags") or []
+    return tags
+
+
+def find_tag_id(client, name):
+    for t in all_tags(client):
+        if (t.get("name") or "").lower() == name.lower():
+            return t["id"]
+    raise HnError(f"no tag named {name!r} (see `hn tags`)")
+
+
+def resolve(client, which):
+    """An id, or a case-insensitive substring of one title."""
+    if which.isdigit():
+        return client.get(f"/notes/{int(which)}")
+    hits = [n for n in notes_of(client) if which.lower() in (n.get("title") or "").lower()]
+    if not hits:
+        raise HnError(f"no note matches {which!r}")
+    if len(hits) > 1:
+        listing = "\n".join("  " + one_line(n) for n in hits[:12])
+        raise HnError(f"{len(hits)} notes match {which!r} — use an id:\n{listing}")
+    return client.get(f"/notes/{hits[0]['id']}")
+
+
+# ------------------------------------------------------------------ commands
+
+def cmd_list(client, args):
+    if args.tag:
+        data = client.get(f"/tags/{find_tag_id(client, args.tag)}/notes") or []
+        notes = data if isinstance(data, list) else (data.get("notes") or [])
+    else:
+        notes = notes_of(client, args.limit)
+    if args.json:
+        print(json.dumps(notes, indent=2, ensure_ascii=False))
+        return 0
+    if not notes:
+        print("no notes")
+        return 0
+    for n in notes:
+        print(one_line(n))
+    print(f"\n{len(notes)} note(s)" + (f", tag {args.tag!r}" if args.tag else ""))
+    return 0
+
+
+def cmd_show(client, args):
+    show_note(resolve(client, args.which), raw=args.raw, as_json=args.json)
+    return 0
+
+
+def cmd_search(client, args):
+    data = client.get("/search", {"q": args.query}) or {}
+    results = (data.get("results") if isinstance(data, dict) else data) or []
+    if args.json:
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+        return 0
+    if not results:
+        print(f"nothing found for {args.query!r}")
+        return 0
+    for n in results:
+        print(one_line(n))
+    print(f"\n{len(results)} result(s) for {args.query!r}")
+    return 0
+
+
+def cmd_tags(client, args):
+    tags = all_tags(client)
+    if args.json:
+        print(json.dumps(tags, indent=2, ensure_ascii=False))
+        return 0
+    if not tags:
+        print("no tags")
+        return 0
+    width = max(len(t.get("name") or "?") for t in tags) + 2
+    for t in sorted(tags, key=lambda x: (-(x.get("note_count") or 0), x.get("name") or "")):
+        print(f"{(t.get('name') or '?'):<{width}} {t.get('note_count') or 0:>3} note(s)")
+    print(f"\n{len(tags)} tag(s)")
+    return 0
+
+
+# ---------------------------------------------------------------------- main
+
+def build_parser():
+    p = argparse.ArgumentParser(prog=PROG, description="Harri's Notes from the terminal")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    lp = sub.add_parser("list", aliases=["ls"], help="list notes (pinned first)")
+    lp.add_argument("--tag", help="only notes carrying this tag")
+    lp.add_argument("--limit", type=int, default=20, help="how many to fetch (default 20)")
+    lp.add_argument("--json", action="store_true", help="raw JSON, for scripting")
+    lp.set_defaults(func=cmd_list)
+
+    sp = sub.add_parser("show", help="show one note: an id, or part of a title")
+    sp.add_argument("which")
+    sp.add_argument("--raw", action="store_true",
+                    help="content only, for `hn show 92 --raw | vim -` or `| less`")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_show)
+
+    qp = sub.add_parser("search", help="full-text search")
+    qp.add_argument("query")
+    qp.add_argument("--json", action="store_true")
+    qp.set_defaults(func=cmd_search)
+
+    tp = sub.add_parser("tags", help="list tags with note counts")
+    tp.add_argument("--json", action="store_true")
+    tp.set_defaults(func=cmd_tags)
+
+    sub.add_parser("version", help="print the version").set_defaults(
+        func=lambda client, args: (print(f"{PROG} {VERSION}"), 0)[1])
+    return p
+
+
+VERSION = "0.1.0"
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    try:
+        base_url, token = load_auth()
+        return args.func(Client(base_url, token), args)
+    except HnError as e:
+        print(f"{PROG}: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())
