@@ -205,7 +205,10 @@ def cmd_list(client, args):
 
 
 def cmd_show(client, args):
-    show_note(resolve(client, args.which), raw=args.raw, as_json=args.json)
+    which = pick_or_explain(client, args, "note> ", "show")
+    if which is None:
+        return 1
+    show_note(resolve(client, which), raw=args.raw, as_json=args.json)
     return 0
 
 
@@ -237,6 +240,68 @@ def cmd_tags(client, args):
         print(f"{(t.get('name') or '?'):<{width}} {t.get('note_count') or 0:>3} note(s)")
     print(f"\n{len(tags)} tag(s)")
     return 0
+
+
+# -------------------------------------------------------------------- picking
+#
+# fzf is a convenience, never a dependency: if it is missing, or there is no
+# terminal to draw in, hn prints the list and says how to get the picker. Nothing
+# about hn requires it, so a machine without fzf keeps working exactly as before.
+
+PICK_HINT = """fzf is not installed (or there is no terminal here), so hn cannot pick
+interactively. Install fzf for the picker, or name a note directly:
+
+    hn {cmd} <id or part of a title>
+
+Notes you could have picked:"""
+
+
+def fzf_path():
+    """The fzf to use: $HN_FZF if set, otherwise whatever is on $PATH."""
+    return os.environ.get("HN_FZF") or shutil.which("fzf")
+
+
+def can_pick():
+    """Picking needs a picker and a terminal. Overridden in tests."""
+    return bool(fzf_path()) and sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def choose(notes, prompt):
+    """Ask for one note. Returns an id, or None if cancelled or cannot pick.
+
+    Lines are fed as '<id>\t<label>' so the id can be read back unambiguously while
+    fzf displays only the label.
+    """
+    if not can_pick():
+        return None
+    lines = "".join(f"{n.get('id')}\t{one_line(n)}\n" for n in notes)
+    cmd = [fzf_path(), "--delimiter=\t", "--with-nth=2..", f"--prompt={prompt}"]
+    proc = subprocess.run(cmd, input=lines, text=True, capture_output=True)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None            # Esc / Ctrl-C / no match: nothing chosen, nothing done
+    return int(proc.stdout.split("\t", 1)[0])
+
+
+def pick_or_explain(client, args, prompt, cmd_name):
+    """Resolve args.which, picking interactively when it was not given.
+
+    Returns the note id as a string, or None after explaining itself.
+    """
+    if args.which:
+        return args.which
+    notes = notes_of(client, 50)
+    if args.no_pick:
+        for n in notes:
+            print(one_line(n))
+        return None
+    if notes:
+        chosen = choose(notes, prompt)
+        if chosen is not None:
+            return str(chosen)
+    print(PICK_HINT.format(cmd=cmd_name), file=sys.stderr)
+    for n in notes:
+        print(one_line(n))
+    return None
 
 
 # -------------------------------------------------------------------- editing
@@ -282,7 +347,10 @@ def conflict_message(note_id, fresh, keep):
 
 
 def cmd_edit(client, args):
-    note = resolve(client, args.which)
+    which = pick_or_explain(client, args, "edit> ", "edit")
+    if which is None:
+        return 1
+    note = resolve(client, which)
     note_id = note.get("id")
     started_from = note.get("updated_at")
     original = note.get("content") or ""
@@ -351,11 +419,14 @@ def build_parser():
     lp.add_argument("--json", action="store_true", help="raw JSON, for scripting")
     lp.set_defaults(func=cmd_list)
 
-    sp = sub.add_parser("show", help="show one note: an id, or part of a title")
-    sp.add_argument("which")
+    sp = sub.add_parser("show", help="show one note; with no argument, pick one")
+    sp.add_argument("which", nargs="?",
+                    help="an id, or part of a title (omit to pick with fzf)")
     sp.add_argument("--raw", action="store_true",
                     help="content only, for `hn show 92 --raw | vim -` or `| less`")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--no-pick", action="store_true",
+                    help="never open the picker: just list what is available")
     sp.set_defaults(func=cmd_show)
 
     qp = sub.add_parser("search", help="full-text search")
@@ -364,10 +435,13 @@ def build_parser():
     qp.set_defaults(func=cmd_search)
 
     ep = sub.add_parser("edit", help="edit a note's content in $EDITOR (never clobbers)")
-    ep.add_argument("which", help="an id, or a unique part of the title")
+    ep.add_argument("which", nargs="?",
+                    help="an id, or a unique part of the title (omit to pick with fzf)")
     ep.add_argument("--editor", help="editor to run (default $HN_EDITOR, $VISUAL, $EDITOR, vi)")
     ep.add_argument("--content-file", help="take the new content from this file (no editor)")
     ep.add_argument("--dry-run", action="store_true", help="say what would be sent, send nothing")
+    ep.add_argument("--no-pick", action="store_true",
+                    help="never open the picker: just list what is available")
     ep.add_argument("-q", "--quiet", action="store_true", help="no progress line on stderr")
     ep.set_defaults(func=cmd_edit)
 
@@ -380,7 +454,7 @@ def build_parser():
     return p
 
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 
 def main(argv=None):

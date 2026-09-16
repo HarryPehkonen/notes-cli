@@ -16,10 +16,10 @@ sitting in. `hn` is the thin end of that: read first, then edit in place with
 | command | state |
 |---|---|
 | `hn list [--tag T] [--limit N] [--json]` | working |
-| `hn show <id or part of a title> [--raw] [--json]` | working |
+| `hn show [<id or part of a title>] [--raw] [--json] [--no-pick]` | working |
 | `hn search <query> [--json]` | working |
 | `hn tags` | working |
-| `hn edit <id> [--editor E] [--content-file F] [--dry-run]` | working |
+| `hn edit [<id>] [--editor E] [--content-file F] [--dry-run]` | working |
 | `hn version` | working |
 | new / tag / pin / archive | next — see Spikes |
 
@@ -56,7 +56,7 @@ the note body.
 
 ## Tests
 
-    ./gate.sh          # syntax + 26 unit tests, offline, no dependencies
+    ./gate.sh          # syntax + 33 unit tests, offline, no dependencies
 
 The API is faked, so the suite needs no network and no token — and it pins the
 **contract** (`/tags/:id/notes` for listing by tag, `/search?q=`, the `{success, data}`
@@ -64,6 +64,24 @@ envelope) rather than whatever the server happens to do today. One manual smoke 
 covers the live path:
 
     hn list && hn tags && hn show 98 --raw | head
+
+## Picking a note
+
+    hn show            # pick from your notes, then show it
+    hn edit            # pick one, then edit it
+    hn show --no-pick  # never open the picker: just list what is available
+
+`fzf` is **optional** — never a dependency. If it is installed *and* there is a
+terminal, `hn show` / `hn edit` with no argument open a picker. If fzf is missing, or
+the output is piped, or `$HN_FZF` points somewhere useless, hn prints the list, says
+why it could not pick, and exits 1 without touching anything:
+
+    fzf is not installed (or there is no terminal here), so hn cannot pick
+    interactively. Install fzf for the picker, or name a note directly:
+        hn show <id or part of a title>
+
+A cancelled picker (Esc, Ctrl-C) writes nothing, which is what makes `hn edit` with no
+argument safe to abort. Point hn at a specific fzf binary with `$HN_FZF`.
 
 ## Editing safely
 
@@ -104,7 +122,7 @@ Built in risk order, as ops proposed:
 2. **edit round-trip** (`$EDITOR`, and detect that the note changed underneath) — done.
    Verified live: an editor that writes the note from another session gets refused,
    the server's text survives and the user's edit is kept on disk.
-3. **fzf picker** for `list`/`show` with no argument.
+3. **fzf picker** for `show`/`edit` with no argument — done, and optional by design.
 4. **Vim + install** polish.
 
 ## Licence
