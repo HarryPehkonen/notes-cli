@@ -19,7 +19,11 @@ Every response is wrapped: {"success": bool, "data": ..., "meta"?: ...}.
 import argparse
 import json
 import os
+import shlex
+import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,7 +35,15 @@ TIMEOUT = 20
 
 
 class HnError(Exception):
-    """Anything worth showing the user instead of a traceback."""
+    """Anything worth showing the user instead of a traceback.
+
+    Carries the HTTP status when there is one, so callers can react to a specific
+    code — 409 Conflict on a write is the case that matters.
+    """
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 
 def load_auth(path=None):
@@ -81,7 +93,8 @@ class Client:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
-            raise HnError(self._explain(e.code, e.read().decode("utf-8", "replace"))) from None
+            raw = e.read().decode("utf-8", "replace")
+            raise HnError(self._explain(e.code, raw), status=e.code) from None
         except urllib.error.URLError as e:
             raise HnError(f"cannot reach {self.base_url}: {e.reason}") from None
         try:
@@ -226,6 +239,106 @@ def cmd_tags(client, args):
     return 0
 
 
+# -------------------------------------------------------------------- editing
+#
+# The rule for everything below: the user's text is never at risk. A conflict, a
+# crashed editor or a changed note must leave the edited text on disk and must not
+# write anything to the server. The lock is the note's updated_at: the server
+# answers 409 when it has moved, and hn checks the same thing itself first, because
+# a client that sends the wrong field name is silently unprotected (measured:
+# updated_at is the one the server honours; updatedAt/contentVersion are ignored).
+
+EDITOR_FALLBACK = "vi"
+
+
+def editor_command(override=None):
+    """--editor, then $HN_EDITOR, $VISUAL, $EDITOR, then vi. May contain arguments."""
+    for candidate in (override, os.environ.get("HN_EDITOR"), os.environ.get("VISUAL"),
+                      os.environ.get("EDITOR"), EDITOR_FALLBACK):
+        if candidate:
+            return shlex.split(candidate)
+    return [EDITOR_FALLBACK]
+
+
+def temp_note_file(note_id, content):
+    """A private directory holding the note body: dir 700, file 600."""
+    d = Path(tempfile.mkdtemp(prefix=f"hn-edit-{note_id}-"))
+    os.chmod(d, 0o700)
+    p = d / f"note-{note_id}.md"
+    p.write_text(content)
+    os.chmod(p, 0o600)
+    return p
+
+
+def conflict_message(note_id, fresh, keep):
+    lines = [f"note {note_id} changed on the server since you started — NOTHING was written."]
+    server_len = len(fresh.get("content") or "")
+    lines.append(f"  server now: {fresh.get('updated_at')}  ({server_len} bytes)")
+    if keep is not None:
+        lines.append(f"  your edits: {keep}  ({keep.stat().st_size} bytes — kept)")
+        lines.append(f"  re-run:     hn edit {note_id} --content-file {keep}")
+        lines.append("  or open both and merge by hand.")
+    return "\n".join(lines)
+
+
+def cmd_edit(client, args):
+    note = resolve(client, args.which)
+    note_id = note.get("id")
+    started_from = note.get("updated_at")
+    original = note.get("content") or ""
+
+    path = None
+    if args.content_file:
+        edited = Path(args.content_file).read_text()
+    else:
+        path = temp_note_file(note_id, original)
+        cmd = editor_command(args.editor) + [str(path)]
+        if not args.quiet:
+            print(f"editing note {note_id} with '{cmd[0]}' (temp file {path})", file=sys.stderr)
+        rc = subprocess.call(cmd)
+        if rc != 0:
+            raise HnError(f"the editor exited {rc} — nothing was written;\n"
+                          f"  your text is still at {path}")
+        if not path.exists():
+            shutil.rmtree(path.parent, ignore_errors=True)
+            raise HnError(f"the editor removed {path.parent} — nothing was written")
+        edited = path.read_text()
+
+    def tidy():
+        if path is not None:
+            shutil.rmtree(path.parent, ignore_errors=True)
+
+    if edited == original:
+        print(f"note {note_id} unchanged — nothing sent to the server")
+        tidy()
+        return 0
+
+    body = {"content": edited, "updated_at": started_from}
+    if args.dry_run:
+        print(f"would PUT /notes/{note_id} with {len(edited)} bytes (was {len(original)}), "
+              f"lock updated_at={started_from}")
+        print(f"  first 80 chars: {edited[:80]!r}")
+        tidy()
+        return 0
+
+    fresh = client.get(f"/notes/{note_id}")
+    if fresh.get("updated_at") != started_from:
+        raise HnError(conflict_message(note_id, fresh, path))
+
+    try:
+        result = client.request("PUT", f"/notes/{note_id}", body=body)
+    except HnError as e:
+        if e.status == 409:
+            raise HnError(conflict_message(note_id, client.get(f"/notes/{note_id}"), path)) from None
+        raise
+
+    now = (result or {}).get("updated_at") if isinstance(result, dict) else None
+    print(f"note {note_id} updated: {len(original)} -> {len(edited)} bytes"
+          + (f", version now {now}" if now else ""))
+    tidy()
+    return 0
+
+
 # ---------------------------------------------------------------------- main
 
 def build_parser():
@@ -250,6 +363,14 @@ def build_parser():
     qp.add_argument("--json", action="store_true")
     qp.set_defaults(func=cmd_search)
 
+    ep = sub.add_parser("edit", help="edit a note's content in $EDITOR (never clobbers)")
+    ep.add_argument("which", help="an id, or a unique part of the title")
+    ep.add_argument("--editor", help="editor to run (default $HN_EDITOR, $VISUAL, $EDITOR, vi)")
+    ep.add_argument("--content-file", help="take the new content from this file (no editor)")
+    ep.add_argument("--dry-run", action="store_true", help="say what would be sent, send nothing")
+    ep.add_argument("-q", "--quiet", action="store_true", help="no progress line on stderr")
+    ep.set_defaults(func=cmd_edit)
+
     tp = sub.add_parser("tags", help="list tags with note counts")
     tp.add_argument("--json", action="store_true")
     tp.set_defaults(func=cmd_tags)
@@ -259,7 +380,7 @@ def build_parser():
     return p
 
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def main(argv=None):

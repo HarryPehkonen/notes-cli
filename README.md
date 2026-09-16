@@ -19,8 +19,9 @@ sitting in. `hn` is the thin end of that: read first, then edit in place with
 | `hn show <id or part of a title> [--raw] [--json]` | working |
 | `hn search <query> [--json]` | working |
 | `hn tags` | working |
+| `hn edit <id> [--editor E] [--content-file F] [--dry-run]` | working |
 | `hn version` | working |
-| edit / new / tag / pin / archive | next — see Spikes |
+| new / tag / pin / archive | next — see Spikes |
 
 ## Install
 
@@ -55,7 +56,7 @@ the note body.
 
 ## Tests
 
-    ./gate.sh          # syntax + 16 unit tests, offline, no dependencies
+    ./gate.sh          # syntax + 26 unit tests, offline, no dependencies
 
 The API is faked, so the suite needs no network and no token — and it pins the
 **contract** (`/tags/:id/notes` for listing by tag, `/search?q=`, the `{success, data}`
@@ -64,13 +65,45 @@ covers the live path:
 
     hn list && hn tags && hn show 98 --raw | head
 
+## Editing safely
+
+    hn edit 98                          # opens $EDITOR on a temp copy
+    hn edit 98 --editor "nvim -u NONE"  # a specific editor
+    hn edit 98 --content-file new.md    # no editor: take the content from a file
+    hn edit 98 --dry-run                # say what would be sent, send nothing
+
+`hn edit` never clobbers. The note carries an optimistic lock — its `updated_at` —
+and hn sends the value it started from. Two guards protect you:
+
+1. before writing, hn re-reads the note; if `updated_at` moved, it **refuses**;
+2. if it still loses the race, the server answers **409 Conflict** and hn refuses.
+
+On refusal, **nothing is written** and your edited text is kept on disk, with the
+exact command to retry:
+
+    hn: note 98 changed on the server since you started — NOTHING was written.
+      server now: 2026-09-16T18:23:52.418Z  (31 bytes)
+      your edits: /tmp/hn-edit-98-ab12cd34/note-98.md  (30 bytes — kept)
+      re-run:     hn edit 98 --content-file /tmp/hn-edit-98-ab12cd34/note-98.md
+
+The temp file is created in a private directory (dir 700, file 600) and removed after
+a successful write. If the editor exits non-zero, or deletes the file, nothing is
+sent either.
+
+Measured, and worth knowing for any other tooling: the lock field the server honours
+is **`updated_at`**. Sending `updatedAt`, `contentVersion` or `version` is accepted
+*and ignored* — a client that sends one of those has no protection at all and will
+silently overwrite a newer note. (`DELETE /api/notes/:id` soft-deletes: 204, the note
+leaves the default list but is still readable by id.)
+
 ## Spikes
 
 Built in risk order, as ops proposed:
 
 1. **auth + read** — done (this commit).
-2. **edit round-trip** (`$EDITOR`, and detect that the note changed underneath) — next.
-   This is the data-integrity one; it gets a throwaway note and a 409 test.
+2. **edit round-trip** (`$EDITOR`, and detect that the note changed underneath) — done.
+   Verified live: an editor that writes the note from another session gets refused,
+   the server's text survives and the user's edit is kept on disk.
 3. **fzf picker** for `list`/`show` with no argument.
 4. **Vim + install** polish.
 
