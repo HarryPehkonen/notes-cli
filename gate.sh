@@ -4,8 +4,8 @@ set -eu
 cd "$(dirname "$0")"
 
 echo "== syntax =="
-python3 -m py_compile hn
-echo "   hn compiles"
+python3 -m py_compile notes
+echo "   notes compiles"
 
 echo "== unit tests =="
 # No pipe here: a pipeline would return tail's status, not the tests'.
@@ -21,7 +21,7 @@ tail -3 "$out"
 rm -f "$out"
 
 echo "== CLI smoke =="
-./hn --help >/dev/null
-echo "   hn --help ok"
+./notes --help >/dev/null
+echo "   notes --help ok"
 
 echo "GATE PASSED"

@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 import test_hn  # noqa: E402
 from test_hn import NOTE_PINNED, FakeClient, run  # noqa: E402
 
-hn = test_hn.hn
+notes = test_hn.notes
 
 
 class EditClient(FakeClient):
@@ -52,7 +52,7 @@ class EditClient(FakeClient):
         if method == "PUT":
             self.puts.append(body)
             if self.put_409:
-                raise hn.HnError("HTTP 409: Conflict", status=409)
+                raise notes.HnError("HTTP 409: Conflict", status=409)
             return {"id": self.note["id"], "updated_at": "2026-09-16T20:00:00.000Z"}
         return self.get(path, params)
 
@@ -108,7 +108,7 @@ class EditTests(unittest.TestCase):
     def test_editor_failure_writes_nothing(self):
         c = EditClient()
         ed = make_editor(self.tmp, 'echo "half a thought" >> "$1"; exit 3')
-        with self.assertRaises(hn.HnError) as cm:
+        with self.assertRaises(notes.HnError) as cm:
             run(["edit", "47", "--editor", ed], c)
         self.assertIn("exited 3", str(cm.exception))
         self.assertEqual(c.puts, [])
@@ -116,7 +116,7 @@ class EditTests(unittest.TestCase):
     def test_editor_removing_the_file_writes_nothing(self):
         c = EditClient()
         ed = make_editor(self.tmp, 'rm -f "$1"')
-        with self.assertRaises(hn.HnError) as cm:
+        with self.assertRaises(notes.HnError) as cm:
             run(["edit", "47", "--editor", ed], c)
         self.assertIn("nothing was written", str(cm.exception))
         self.assertEqual(c.puts, [])
@@ -125,7 +125,7 @@ class EditTests(unittest.TestCase):
         """The note moved between our read and our write: refuse, keep the edit."""
         c = EditClient(change_between_reads=True)
         ed = make_editor(self.tmp, 'echo "my precious edit" >> "$1"')
-        with self.assertRaises(hn.HnError) as cm:
+        with self.assertRaises(notes.HnError) as cm:
             run(["edit", "47", "--editor", ed], c)
         msg = str(cm.exception)
         self.assertIn("changed on the server", msg)
@@ -144,7 +144,7 @@ class EditTests(unittest.TestCase):
     def test_server_409_is_also_refused(self):
         c = EditClient(put_409=True)
         ed = make_editor(self.tmp, 'echo "x" >> "$1"')
-        with self.assertRaises(hn.HnError) as cm:
+        with self.assertRaises(notes.HnError) as cm:
             run(["edit", "47", "--editor", ed], c)
         self.assertIn("changed on the server", str(cm.exception))
         self.assertEqual(len(c.puts), 1)          # it tried

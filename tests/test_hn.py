@@ -18,11 +18,11 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "hn"
-_loader = importlib.machinery.SourceFileLoader("hn", str(SRC))
-_spec = importlib.util.spec_from_loader("hn", _loader)
-hn = importlib.util.module_from_spec(_spec)
-_loader.exec_module(hn)
+SRC = Path(__file__).resolve().parent.parent / "notes"
+_loader = importlib.machinery.SourceFileLoader("notes", str(SRC))
+_spec = importlib.util.spec_from_loader("notes", _loader)
+notes = importlib.util.module_from_spec(_spec)
+_loader.exec_module(notes)
 
 
 NOTE_PINNED = {"id": 47, "title": "Things to do", "is_pinned": True, "is_archived": False,
@@ -61,7 +61,7 @@ class FakeClient:
 
 def run(argv, client):
     """Call hn's commands with a fake client, capturing stdout/stderr."""
-    args = hn.build_parser().parse_args(argv)
+    args = notes.build_parser().parse_args(argv)
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
         rc = args.func(client, args)
@@ -77,34 +77,34 @@ class AuthTests(unittest.TestCase):
         return p
 
     def test_missing_file_says_what_to_do(self):
-        with self.assertRaises(hn.HnError) as cm:
-            hn.load_auth("/nonexistent/auth.json")
+        with self.assertRaises(notes.HnError) as cm:
+            notes.load_auth("/nonexistent/auth.json")
         self.assertIn("no auth file", str(cm.exception))
 
     def test_world_readable_token_is_refused(self):
         p = self._file({"base_url": "https://x/api", "token": "nt_" + "a" * 40}, mode=0o644)
-        with self.assertRaises(hn.HnError) as cm:
-            hn.load_auth(p)
+        with self.assertRaises(notes.HnError) as cm:
+            notes.load_auth(p)
         self.assertIn("chmod 600", str(cm.exception))
 
     def test_missing_token_key(self):
         p = self._file({"base_url": "https://x/api"})
-        with self.assertRaises(hn.HnError) as cm:
-            hn.load_auth(p)
+        with self.assertRaises(notes.HnError) as cm:
+            notes.load_auth(p)
         self.assertIn("token", str(cm.exception))
 
     def test_ok_and_trailing_slash_stripped(self):
         token = "nt_" + "b" * 40
         p = self._file({"base_url": "https://harrisnotes.ca/api/", "token": token,
                         "name": "hn-test"})
-        base, tok = hn.load_auth(p)
+        base, tok = notes.load_auth(p)
         self.assertEqual(base, "https://harrisnotes.ca/api")
         self.assertEqual(tok, token)
 
     def test_non_http_base_url_rejected(self):
         p = self._file({"base_url": "ftp://x", "token": "nt_" + "c" * 40})
-        with self.assertRaises(hn.HnError):
-            hn.load_auth(p)
+        with self.assertRaises(notes.HnError):
+            notes.load_auth(p)
 
 
 class CommandTests(unittest.TestCase):
@@ -123,7 +123,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("JSOM", out)
 
     def test_list_unknown_tag_is_an_error(self):
-        with self.assertRaises(hn.HnError) as cm:
+        with self.assertRaises(notes.HnError) as cm:
             run(["list", "--tag", "nope"], FakeClient())
         self.assertIn("no tag named", str(cm.exception))
 
@@ -139,7 +139,7 @@ class CommandTests(unittest.TestCase):
         self.assertIn("#98", out)
 
     def test_show_unknown_title_is_an_error(self):
-        with self.assertRaises(hn.HnError) as cm:
+        with self.assertRaises(notes.HnError) as cm:
             run(["show", "zzzz"], FakeClient())
         self.assertIn("no note matches", str(cm.exception))
 

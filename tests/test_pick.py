@@ -15,7 +15,7 @@ import test_hn
 from test_edit import EditClient
 from test_hn import FakeClient, run
 
-hn = test_hn.hn
+notes = test_hn.notes
 
 
 def stub_fzf(tmp, behaviour):
@@ -37,18 +37,18 @@ def stub_fzf(tmp, behaviour):
 class PickerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self._saved = (hn.can_pick, os.environ.get("HN_FZF"))
-        hn.can_pick = lambda: True            # pretend we have a terminal
+        self._saved = (notes.can_pick, os.environ.get("HN_FZF"))
+        notes.can_pick = lambda: True            # pretend we have a terminal
 
     def tearDown(self):
-        hn.can_pick, old = self._saved
+        notes.can_pick, old = self._saved
         if old is None:
             os.environ.pop("HN_FZF", None)
         else:
             os.environ["HN_FZF"] = old
 
     def test_no_fzf_lists_notes_and_explains(self):
-        hn.can_pick = lambda: False           # no fzf, or no terminal
+        notes.can_pick = lambda: False           # no fzf, or no terminal
         os.environ.pop("HN_FZF", None)
         p = Path(self.tmp) / "path-without-fzf"
         p.mkdir()
@@ -61,7 +61,7 @@ class PickerTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("Things to do", out)              # the list still appears
         self.assertIn("fzf is not installed", err)      # and says why it could not pick
-        self.assertIn("hn show", err)
+        self.assertIn("notes show", err)
 
     def test_choice_from_fzf_is_used(self):
         fzf, stdin_dump, _ = stub_fzf(self.tmp, "choose")

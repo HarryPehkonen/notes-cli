@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""hn — Harri's Notes from the terminal.
+"""notes — the CLI for a Notes server (harrisnotes.ca-compatible).
 
 Stdlib only: no dependencies, no build step. One executable file.
 
-The API token lives in ~/.config/hn/auth.json (mode 600, written by ops) and is
-never passed on a command line, never printed, and never included in an error
-message. Override the location with HN_AUTH_FILE (tests use this).
+The API token is never passed on a command line, never printed, and never included
+in an error message. Where it comes from, highest priority first:
+    1. HN_AUTH_FILE            explicit path to an auth file
+    2. NOTES_TOKEN             (+ NOTES_BASE_URL, default https://harrisnotes.ca/api)
+    3. --profile NAME          ~/.config/notes-cli/auth.NAME.json
+    4. ~/.config/notes-cli/auth.json
+    5. ~/.config/hn/auth.json  (legacy fallback)
+Auth files must be mode 600. `notes setup` writes one.
 
 Read paths are the read endpoints:
     GET /api/notes?limit=N        -> data.notes[]        (pinned first)
@@ -17,8 +22,10 @@ Every response is wrapped: {"success": bool, "data": ..., "meta"?: ...}.
 """
 
 import argparse
+import getpass
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -29,9 +36,10 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-PROG = "hn"
-DEFAULT_AUTH = Path.home() / ".config" / "hn" / "auth.json"
+PROG = "notes"
+DEFAULT_BASE_URL = "https://harrisnotes.ca/api"
 TIMEOUT = 20
+PROFILE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 
 
 class HnError(Exception):
@@ -46,14 +54,51 @@ class HnError(Exception):
         self.status = status
 
 
-def load_auth(path=None):
-    """Return (base_url, token) from the auth file, checking it is not world-readable."""
-    p = Path(path or os.environ.get("HN_AUTH_FILE") or DEFAULT_AUTH)
+def config_dir():
+    return Path.home() / ".config" / "notes-cli"
+
+
+def legacy_auth_path():
+    return Path.home() / ".config" / "hn" / "auth.json"
+
+
+def check_profile(profile):
+    if not PROFILE_RE.match(profile):
+        raise HnError(f"bad profile name {profile!r} — use letters, digits, '_', '-', '.'")
+    return profile
+
+
+def profile_path(profile=None):
+    return config_dir() / (f"auth.{check_profile(profile)}.json" if profile else "auth.json")
+
+
+def check_base_url(base, where):
+    base = (base or "").rstrip("/")
+    if not base.startswith(("http://", "https://")):
+        raise HnError(f"{where}: base_url must be an http(s) URL")
+    return base
+
+
+def load_auth(path=None, profile=None):
+    """Return (base_url, token); see the module docstring for the precedence."""
+    path = path or os.environ.get("HN_AUTH_FILE")
+    if not path and os.environ.get("NOTES_TOKEN"):
+        base = os.environ.get("NOTES_BASE_URL") or DEFAULT_BASE_URL
+        return check_base_url(base, "NOTES_BASE_URL"), os.environ["NOTES_TOKEN"]
+    if not path:
+        if profile:
+            path = profile_path(profile)
+        else:
+            path = profile_path()
+            if not path.exists() and legacy_auth_path().exists():
+                path = legacy_auth_path()
+    p = Path(path)
     if not p.exists():
         raise HnError(
             f"no auth file at {p}\n"
-            "Run ops's setup script on this machine (it prompts for the token, so the\n"
-            "token never reaches the shell history)."
+            "Run `notes setup" + (f" --profile {profile}" if profile else "") + "` "
+            "(the token is prompted for, so it never reaches the shell history),\n"
+            "or set NOTES_TOKEN."
         )
     mode = p.stat().st_mode & 0o777
     if mode & 0o077:
@@ -64,11 +109,8 @@ def load_auth(path=None):
         raise HnError(f"cannot read {p}: {e}")
     for key in ("base_url", "token"):
         if not d.get(key):
-            raise HnError(f"{p} has no {key!r} — re-run ops's setup script")
-    base = d["base_url"].rstrip("/")
-    if not base.startswith(("http://", "https://")):
-        raise HnError(f"{p}: base_url must be an http(s) URL")
-    return base, d["token"]
+            raise HnError(f"{p} has no {key!r} — re-run `notes setup`")
+    return check_base_url(d["base_url"], str(p)), d["token"]
 
 
 class Client:
@@ -97,6 +139,8 @@ class Client:
             raise HnError(self._explain(e.code, raw), status=e.code) from None
         except urllib.error.URLError as e:
             raise HnError(f"cannot reach {self.base_url}: {e.reason}") from None
+        if not raw.strip():
+            return None
         try:
             payload = json.loads(raw)
         except ValueError:
@@ -168,7 +212,7 @@ def find_tag_id(client, name):
     for t in all_tags(client):
         if (t.get("name") or "").lower() == name.lower():
             return t["id"]
-    raise HnError(f"no tag named {name!r} (see `hn tags`)")
+    raise HnError(f"no tag named {name!r} (see `notes tags`)")
 
 
 def resolve(client, which):
@@ -248,10 +292,10 @@ def cmd_tags(client, args):
 # terminal to draw in, hn prints the list and says how to get the picker. Nothing
 # about hn requires it, so a machine without fzf keeps working exactly as before.
 
-PICK_HINT = """fzf is not installed (or there is no terminal here), so hn cannot pick
+PICK_HINT = """fzf is not installed (or there is no terminal here), so notes cannot pick
 interactively. Install fzf for the picker, or name a note directly:
 
-    hn {cmd} <id or part of a title>
+    notes {cmd} <id or part of a title>
 
 Notes you could have picked:"""
 
@@ -341,7 +385,7 @@ def conflict_message(note_id, fresh, keep):
     lines.append(f"  server now: {fresh.get('updated_at')}  ({server_len} bytes)")
     if keep is not None:
         lines.append(f"  your edits: {keep}  ({keep.stat().st_size} bytes — kept)")
-        lines.append(f"  re-run:     hn edit {note_id} --content-file {keep}")
+        lines.append(f"  re-run:     notes edit {note_id} --content-file {keep}")
         lines.append("  or open both and merge by hand.")
     return "\n".join(lines)
 
@@ -407,10 +451,187 @@ def cmd_edit(client, args):
     return 0
 
 
+# --------------------------------------------------------------------- writing
+#
+# Every write goes through client.request(), the same seam the reads use. Updates
+# send title+content only (never tags): tags have their own endpoints, and a PUT that
+# carried a stale tag list could undo a concurrent tag change.
+
+def read_body(path):
+    """The text of --body-file; '-' means stdin."""
+    if path == "-":
+        return sys.stdin.read()
+    try:
+        return Path(path).read_text()
+    except OSError as e:
+        raise HnError(f"cannot read {path}: {e.strerror or e}")
+
+
+def with_newline(text):
+    return text if not text or text.endswith("\n") else text + "\n"
+
+
+def emit(result):
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def current_note(client, note_id):
+    note = client.get(f"/notes/{note_id}")
+    return note, note.get("title") or "", note.get("content") or ""
+
+
+def put_note(client, note_id, title, content):
+    return client.request("PUT", f"/notes/{note_id}", body={"title": title, "content": content})
+
+
+def cmd_create(client, args):
+    content = read_body(args.body_file)
+    if args.task:
+        content = with_newline(content) + "".join(f"- [ ] {t}\n" for t in args.task)
+    tag_ids = [find_tag_id(client, name) for name in args.tag or []]
+    note = client.request("POST", "/notes",
+                          body={"title": args.title, "content": content, "tags": tag_ids})
+    if args.json:
+        emit(note)
+    else:
+        print(f"created note {(note or {}).get('id')}: {args.title}")
+    return 0
+
+
+def _join(client, args, prepend):
+    body = read_body(args.body_file)
+    _, title, content = current_note(client, args.id)
+    new = with_newline(body) + content if prepend else with_newline(content) + body
+    result = put_note(client, args.id, title, new)
+    if args.json:
+        emit(result)
+    else:
+        print(f"note {args.id} {'prepended' if prepend else 'appended'}: "
+              f"{len(content)} -> {len(new)} bytes")
+    return 0
+
+
+def cmd_append(client, args):
+    return _join(client, args, prepend=False)
+
+
+def cmd_prepend(client, args):
+    return _join(client, args, prepend=True)
+
+
+def cmd_set(client, args):
+    if args.title is None and args.body_file is None:
+        raise HnError("nothing to set: give --title and/or --body-file")
+    _, title, content = current_note(client, args.id)
+    if args.title is not None:
+        title = args.title
+    if args.body_file is not None:
+        content = read_body(args.body_file)
+    result = put_note(client, args.id, title, content)
+    if args.json:
+        emit(result)
+    else:
+        print(f"note {args.id} updated")
+    return 0
+
+
+def _tagging(client, args, adding):
+    tag_id = find_tag_id(client, args.name)
+    path = f"/notes/{args.id}/tags/{tag_id}"
+    result = client.request("PUT" if adding else "DELETE", path)
+    if args.json:
+        emit(result)
+    else:
+        print(f"note {args.id}: {'tagged' if adding else 'untagged'} {args.name}")
+    return 0
+
+
+def cmd_tag(client, args):
+    return _tagging(client, args, True)
+
+
+def cmd_untag(client, args):
+    return _tagging(client, args, False)
+
+
+def cmd_archive(client, args):
+    result = client.request("DELETE", f"/notes/{args.id}")
+    if args.json:
+        emit(result)
+    else:
+        print(f"note {args.id} archived (soft delete; still readable by id)")
+    return 0
+
+
+def versions_of(client, note_id):
+    data = client.get(f"/notes/{note_id}/versions") or []
+    if isinstance(data, dict):
+        data = data.get("versions") or []
+    return data
+
+
+def cmd_versions(client, args):
+    versions = versions_of(client, args.id)
+    if args.json:
+        print(json.dumps(versions, indent=2, ensure_ascii=False))
+        return 0
+    if not versions:
+        print(f"note {args.id} has no saved versions")
+        return 0
+    for v in versions:
+        vid = v.get("version_id", v.get("id"))
+        print(f"{vid!s:>6}  {v.get('created_at') or '?'}  {v.get('title') or ''}  "
+              f"({len(v.get('content') or '')} bytes)")
+    print(f"\n{len(versions)} version(s)")
+    return 0
+
+
+def cmd_restore(client, args):
+    versions = versions_of(client, args.id)
+    if not versions:
+        raise HnError(f"note {args.id} has no saved versions")
+    match = [v for v in versions if str(v.get("id")) == str(args.version_id)]
+    if not match:
+        raise HnError(f"note {args.id} has no version {args.version_id} (see `notes versions {args.id}`)")
+    v = match[0]
+    title = v.get("title")
+    if not title:
+        _, title, _ = current_note(client, args.id)
+    result = put_note(client, args.id, title, v.get("content") or "")
+    if args.json:
+        emit(result)
+    else:
+        print(f"note {args.id} restored from version {args.version_id}")
+    return 0
+
+
+# ----------------------------------------------------------------------- setup
+
+def cmd_setup(args, ask=input, ask_secret=getpass.getpass):
+    """Prompt for base URL and token; write the auth file (file 600, dir 700)."""
+    profile = getattr(args, "profile", None)
+    target = profile_path(profile)
+    base = ask(f"Notes API base URL [{DEFAULT_BASE_URL}]: ").strip() or DEFAULT_BASE_URL
+    base = check_base_url(base, "base URL")
+    token = ask_secret("API token (input hidden): ").strip()
+    if not token:
+        raise HnError("no token given — nothing written")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(target.parent, 0o700)
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps({"base_url": base, "token": token}, indent=2) + "\n")
+    os.chmod(target, 0o600)
+    print(f"wrote {target} (mode 600) for {base}")
+    return 0
+
+
 # ---------------------------------------------------------------------- main
 
 def build_parser():
-    p = argparse.ArgumentParser(prog=PROG, description="Harri's Notes from the terminal")
+    p = argparse.ArgumentParser(prog=PROG, description="the CLI for a Notes server")
+    p.add_argument("--profile", metavar="NAME",
+                   help="use ~/.config/notes-cli/auth.NAME.json (for several servers)")
     sub = p.add_subparsers(dest="command", required=True)
 
     lp = sub.add_parser("list", aliases=["ls"], help="list notes (pinned first)")
@@ -419,11 +640,11 @@ def build_parser():
     lp.add_argument("--json", action="store_true", help="raw JSON, for scripting")
     lp.set_defaults(func=cmd_list)
 
-    sp = sub.add_parser("show", help="show one note; with no argument, pick one")
+    sp = sub.add_parser("show", aliases=["get"], help="show one note; with no argument, pick one")
     sp.add_argument("which", nargs="?",
                     help="an id, or part of a title (omit to pick with fzf)")
     sp.add_argument("--raw", action="store_true",
-                    help="content only, for `hn show 92 --raw | vim -` or `| less`")
+                    help="content only, for `notes show 92 --raw | vim -` or `| less`")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--no-pick", action="store_true",
                     help="never open the picker: just list what is available")
@@ -449,18 +670,58 @@ def build_parser():
     tp.add_argument("--json", action="store_true")
     tp.set_defaults(func=cmd_tags)
 
+    def target(name, help_, with_body=False, body_required=False, with_name=False, json_flag=True):
+        sp_ = sub.add_parser(name, help=help_)
+        if name != "create":
+            sp_.add_argument("id", type=int, help="note id")
+        if with_name:
+            sp_.add_argument("name", help="tag name")
+        if with_body:
+            sp_.add_argument("--body-file", required=body_required,
+                             help="file to read the text from ('-' for stdin)")
+        if json_flag:
+            sp_.add_argument("--json", action="store_true", help="print the API response as JSON")
+        return sp_
+
+    cp = target("create", "create a note", with_body=True, body_required=True)
+    cp.add_argument("--title", required=True)
+    cp.add_argument("--tag", action="append", help="tag name (repeatable)")
+    cp.add_argument("--task", action="append",
+                    help="add a '- [ ] item' line to the content (repeatable)")
+    cp.set_defaults(func=cmd_create)
+    target("append", "append text to a note", with_body=True, body_required=True
+           ).set_defaults(func=cmd_append)
+    target("prepend", "prepend text to a note", with_body=True, body_required=True
+           ).set_defaults(func=cmd_prepend)
+    stp = target("set", "replace a note's title and/or content", with_body=True)
+    stp.add_argument("--title")
+    stp.set_defaults(func=cmd_set)
+    target("tag", "add a tag to a note", with_name=True).set_defaults(func=cmd_tag)
+    target("untag", "remove a tag from a note", with_name=True).set_defaults(func=cmd_untag)
+    target("archive", "archive (soft-delete) a note").set_defaults(func=cmd_archive)
+    target("versions", "list a note's saved versions").set_defaults(func=cmd_versions)
+    rp = target("restore", "restore a note's content from a saved version")
+    rp.add_argument("version_id")
+    rp.set_defaults(func=cmd_restore)
+
+    setp = sub.add_parser("setup", help="store the server URL and token (prompts; token hidden)")
+    setp.add_argument("--profile", metavar="NAME", default=argparse.SUPPRESS)
+    setp.set_defaults(func=None)
+
     sub.add_parser("version", help="print the version").set_defaults(
         func=lambda client, args: (print(f"{PROG} {VERSION}"), 0)[1])
     return p
 
 
-VERSION = "0.3.0"
+VERSION = "1.0.0"
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
-        base_url, token = load_auth()
+        if args.command == "setup":
+            return cmd_setup(args)
+        base_url, token = load_auth(profile=args.profile)
         return args.func(Client(base_url, token), args)
     except HnError as e:
         print(f"{PROG}: {e}", file=sys.stderr)

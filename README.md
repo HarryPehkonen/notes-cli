@@ -1,108 +1,138 @@
-# hn — Harri's Notes from the terminal
+# notes — the CLI for a Notes server
 
-Read and (soon) edit [Harri's Notes](https://harrisnotes.ca) from a shell, without a
-browser. Python **standard library only**: no dependencies, no build step, one
-executable file.
+A command-line client for any [Notes](https://harrisnotes.ca)-compatible server: read,
+search, edit, create, tag and archive notes from a shell, without a browser. Python
+**standard library only**: no dependencies, no build step, one executable file.
 
-## Why
+Version 1.0.0.
 
-The web app is good at notes. It is not good at `grep`, at `| less`, at getting a
-fenced block into an editor, or at opening a note from a terminal you are already
-sitting in. `hn` is the thin end of that: read first, then edit in place with
-`$EDITOR`.
+## Make it yours
 
-## Status
-
-| command | state |
-|---|---|
-| `hn list [--tag T] [--limit N] [--json]` | working |
-| `hn show [<id or part of a title>] [--raw] [--json] [--no-pick]` | working |
-| `hn search <query> [--json]` | working |
-| `hn tags` | working |
-| `hn edit [<id>] [--editor E] [--content-file F] [--dry-run]` | working |
-| `hn version` | working |
-| new / tag / pin / archive | next — see Spikes |
+- **Point it at your server.** `notes setup` asks for a base URL. Use
+  `https://harrisnotes.ca/api`, or any Notes deployment you run yourself — self-hosting
+  is a first-class setup, not an afterthought. Nothing in the client is tied to one host.
+- **Alias it to your initials.** The binary is `notes`; make it `hn`, `jn`, ...:
+  `alias hn=notes`, or `ln -s ~/src/notes/notes ~/.local/bin/hn`.
+- **Several servers?** `notes --profile work list` reads
+  `~/.config/notes-cli/auth.work.json`; `notes setup --profile work` creates it.
+- **Optional niceties, never requirements:** `$EDITOR` (or `$VISUAL`, `$HN_EDITOR`) for
+  `notes edit`; [fzf](https://github.com/junegunn/fzf) for the no-argument picker;
+  `NO_COLOR` is honoured (notes prints no colour today, so it is always safe).
 
 ## Install
 
-    git clone https://github.com/HarryPehkonen/hn.git ~/src/hn
-    ln -sf ~/src/hn/hn ~/.local/bin/hn     # or anywhere on $PATH
-    hn version
+    git clone https://github.com/HarryPehkonen/hn.git ~/src/notes
+    ln -sf ~/src/notes/notes ~/.local/bin/notes     # or anywhere on $PATH
+    notes setup
+    notes version
 
 ## Auth
 
-`hn` reads a personal API token from `~/.config/hn/auth.json`, mode **600** (directory 700):
+Run `notes setup`: it prompts for the base URL (default `https://harrisnotes.ca/api`)
+and the token (hidden input, never echoed, never on a command line) and writes
+`~/.config/notes-cli/auth.json` with mode **600** in a directory of mode 700:
 
-    { "base_url": "https://harrisnotes.ca/api", "token": "nt_...", "name": "hn-macbook" }
+    { "base_url": "https://harrisnotes.ca/api", "token": "nt_..." }
 
-It refuses to start if that file is group- or world-readable, never prints the token,
-and never takes it on a command line. Override the path with `HN_AUTH_FILE` (the tests
-use this). Tokens are minted per machine inside the Notes app, so revoking one machine
-does not disturb the other.
+Where credentials come from, highest priority first:
+
+1. `HN_AUTH_FILE` — explicit path to an auth file (the tests use this)
+2. `NOTES_TOKEN` (with `NOTES_BASE_URL`, default `https://harrisnotes.ca/api`) — env
+   vars win over any file in the config directory; handy for CI and containers
+3. `--profile NAME` — `~/.config/notes-cli/auth.NAME.json`
+4. `~/.config/notes-cli/auth.json`
+5. `~/.config/hn/auth.json` — legacy location from before the rename, still honoured
+
+`notes` refuses to use an auth file that is group- or world-readable, and never prints
+the token. Tokens are minted per machine inside the Notes app, so revoking one machine
+does not disturb the others.
+
+## Commands
+
+| command | what it does |
+|---|---|
+| `notes list [--tag T] [--limit N] [--json]` | list notes, pinned first |
+| `notes show [<id or part of a title>] [--raw] [--json] [--no-pick]` | show one note |
+| `notes search <query> [--json]` | full-text search |
+| `notes tags [--json]` | tags with note counts |
+| `notes edit [<id>] [--editor E] [--content-file F] [--dry-run]` | edit in `$EDITOR`, never clobbers |
+| `notes create --title T --body-file F [--tag t]... [--task "..."]... [--json]` | new note |
+| `notes append ID --body-file F [--json]` | add text at the end |
+| `notes prepend ID --body-file F [--json]` | add text at the start |
+| `notes set ID [--title T] [--body-file F] [--json]` | replace title and/or content |
+| `notes tag ID NAME [--json]` / `notes untag ID NAME [--json]` | add / remove a tag |
+| `notes archive ID [--json]` | soft-delete (still readable by id) |
+| `notes versions ID [--json]` | list saved versions |
+| `notes restore ID VERSION_ID [--json]` | put an earlier version's content back |
+| `notes setup [--profile NAME]` | store URL and token |
+| `notes version` | print the version |
+
+`--body-file -` reads the text from stdin. `--tag` and `--task` repeat; each `--task`
+adds a `- [ ] item` line to the end of the content. Tag names are resolved to ids
+through the API. `append`, `prepend`, `set` and `restore` send title and content only,
+never tags. If the server's versions endpoint returns no `version_id` field, `restore`
+prints the versions as JSON and points you at `notes set`.
 
 ## Use
 
-    hn list --tag c++             # notes carrying a tag
-    hn show 98                    # by id
-    hn show conformance           # by part of the title (must be unique)
-    hn show 98 --raw | vim -      # content only: no headers, no decoration
-    hn search "json patch"        # full-text search, ranked
-    hn tags                       # tags with note counts
-    hn list --json | jq '.[0].id'
+    notes list --tag c++          # notes carrying a tag
+    notes show 98                 # by id
+    notes show conformance        # by part of the title (must be unique)
+    notes show 98 --raw | vim -   # content only: no headers, no decoration
+    notes search "json patch"     # full-text search, ranked
+    echo "- buy milk" | notes append 47 --body-file -
+    notes create --title "Trip" --body-file plan.md --tag travel --task "book flights"
+    notes list --json | jq '.[0].id'
 
-`hn` does not invoke `$PAGER` for you: `hn show 98 | less` is one keystroke more and
-works with whatever pager you already use. `--raw` exists so `| vim -` gets exactly
-the note body.
+`notes` does not invoke `$PAGER` for you: `notes show 98 | less` works with whatever
+pager you already use.
 
 ## Tests
 
-    ./gate.sh          # syntax + 33 unit tests, offline, no dependencies
+    ./gate.sh          # syntax + unit tests + CLI smoke, offline, no dependencies
 
 The API is faked, so the suite needs no network and no token — and it pins the
 **contract** (`/tags/:id/notes` for listing by tag, `/search?q=`, the `{success, data}`
-envelope) rather than whatever the server happens to do today. One manual smoke test
-covers the live path:
-
-    hn list && hn tags && hn show 98 --raw | head
+envelope) rather than whatever the server happens to do today.
 
 ## Picking a note
 
-    hn show            # pick from your notes, then show it
-    hn edit            # pick one, then edit it
-    hn show --no-pick  # never open the picker: just list what is available
+    notes show            # pick from your notes, then show it
+    notes edit            # pick one, then edit it
+    notes show --no-pick  # never open the picker: just list what is available
 
 `fzf` is **optional** — never a dependency. If it is installed *and* there is a
-terminal, `hn show` / `hn edit` with no argument open a picker. If fzf is missing, or
-the output is piped, or `$HN_FZF` points somewhere useless, hn prints the list, says
+terminal, `notes show` / `notes edit` with no argument open a picker. If fzf is missing, or
+the output is piped, or `$HN_FZF` points somewhere useless, notes prints the list, says
 why it could not pick, and exits 1 without touching anything:
 
-    fzf is not installed (or there is no terminal here), so hn cannot pick
+    fzf is not installed (or there is no terminal here), so notes cannot pick
     interactively. Install fzf for the picker, or name a note directly:
-        hn show <id or part of a title>
+        notes show <id or part of a title>
 
-A cancelled picker (Esc, Ctrl-C) writes nothing, which is what makes `hn edit` with no
-argument safe to abort. Point hn at a specific fzf binary with `$HN_FZF`.
+A cancelled picker (Esc, Ctrl-C) writes nothing, which is what makes `notes edit` with no
+argument safe to abort. Point notes at a specific fzf binary with `$HN_FZF`.
 
 ## Editing safely
 
-    hn edit 98                          # opens $EDITOR on a temp copy
-    hn edit 98 --editor "nvim -u NONE"  # a specific editor
-    hn edit 98 --content-file new.md    # no editor: take the content from a file
-    hn edit 98 --dry-run                # say what would be sent, send nothing
+    notes edit 98                          # opens $EDITOR on a temp copy
+    notes edit 98 --editor "nvim -u NONE"  # a specific editor
+    notes edit 98 --content-file new.md    # no editor: take the content from a file
+    notes edit 98 --dry-run                # say what would be sent, send nothing
 
-`hn edit` never clobbers. The note carries an optimistic lock — its `updated_at` —
-and hn sends the value it started from. Two guards protect you:
+`notes edit` never clobbers. The note carries an optimistic lock — its `updated_at` —
+and notes sends the value it started from. Two guards protect you:
 
-1. before writing, hn re-reads the note; if `updated_at` moved, it **refuses**;
-2. if it still loses the race, the server answers **409 Conflict** and hn refuses.
+1. before writing, notes re-reads the note; if `updated_at` moved, it **refuses**;
+2. if it still loses the race, the server answers **409 Conflict** and notes refuses.
 
 On refusal, **nothing is written** and your edited text is kept on disk, with the
 exact command to retry:
 
-    hn: note 98 changed on the server since you started — NOTHING was written.
+    notes: note 98 changed on the server since you started — NOTHING was written.
       server now: 2026-09-16T18:23:52.418Z  (31 bytes)
       your edits: /tmp/hn-edit-98-ab12cd34/note-98.md  (30 bytes — kept)
-      re-run:     hn edit 98 --content-file /tmp/hn-edit-98-ab12cd34/note-98.md
+      re-run:     notes edit 98 --content-file /tmp/hn-edit-98-ab12cd34/note-98.md
 
 The temp file is created in a private directory (dir 700, file 600) and removed after
 a successful write. If the editor exits non-zero, or deletes the file, nothing is
@@ -113,17 +143,6 @@ is **`updated_at`**. Sending `updatedAt`, `contentVersion` or `version` is accep
 *and ignored* — a client that sends one of those has no protection at all and will
 silently overwrite a newer note. (`DELETE /api/notes/:id` soft-deletes: 204, the note
 leaves the default list but is still readable by id.)
-
-## Spikes
-
-Built in risk order, as ops proposed:
-
-1. **auth + read** — done (this commit).
-2. **edit round-trip** (`$EDITOR`, and detect that the note changed underneath) — done.
-   Verified live: an editor that writes the note from another session gets refused,
-   the server's text survives and the user's edit is kept on disk.
-3. **fzf picker** for `show`/`edit` with no argument — done, and optional by design.
-4. **Vim + install** polish.
 
 ## Licence
 
