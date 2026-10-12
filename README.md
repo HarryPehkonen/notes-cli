@@ -26,6 +26,15 @@ Version 1.0.0.
     notes setup
     notes version
 
+## Packaging
+
+The deb and rpm published in the pehkonen.dev repo are built from this repo:
+
+    scripts/package.sh            # dist/notes-cli_1.0.0_all.deb + notes-cli-1.0.0-1.noarch.rpm
+
+Both stages assert their contents (exactly /usr/bin/notes, the man page, and
+the copyright file); the deb matches the published package's control fields.
+
 ## Auth
 
 Run `notes setup`: it prompts for the base URL (default `https://harrisnotes.ca/api`)
