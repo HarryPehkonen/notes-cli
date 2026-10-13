@@ -61,7 +61,7 @@ build_rpm() {
   cat > "$tree/SPECS/notes-cli.spec" <<EOF
 Name:           notes-cli
 Version:        $VERSION
-Release:        1
+Release:        1%{?dist}
 Summary:        $SUMMARY
 License:        Unlicense
 URL:            https://github.com/HarryPehkonen/notes-cli
@@ -95,7 +95,7 @@ install -m 644 LICENSE %{buildroot}%{_datadir}/doc/%{name}/copyright
 EOF
   rpmbuild --define "_topdir $(pwd)/$tree" -bb "$tree/SPECS/notes-cli.spec" >/dev/null
   mv "$tree"/RPMS/noarch/notes-cli-*.rpm dist/
-  rpm=dist/notes-cli-$VERSION-1.noarch.rpm
+  rpm=$(ls dist/notes-cli-*.noarch.rpm)
 
   # Assert contents: exactly the binary, the man page, the copyright file.
   c=$(rpm -qlp "$rpm" | grep -cE '/usr/bin/notes$|/usr/share/man/man1/notes\.1|/usr/share/doc/notes-cli/copyright$')
