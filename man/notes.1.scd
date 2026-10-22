@@ -73,6 +73,19 @@ reads _auth.work.json_.
 *--help*
 	Print usage and exit.
 
+# JSON OUTPUT
+
+*--json*
+	Print the unwrapped _data_ of the server's _{"success": true, "data": ...,
+	"meta"?: ...}_ envelope: the note object (with a top-level _id_) for the
+	note-returning commands, a bare array for *list*, *search*, *tags* and
+	*versions*. A response with no body prints _null_.
+
+*--json-envelope*
+	Print the server's response whole, envelope and all - the API's own shape.
+	This implies *--json* and is the only way to read _meta.total_ and
+	_meta.hasMore_, because *GET /notes* returns a page.
+
 # ENVIRONMENT
 
 *$EDITOR*, *$VISUAL*, *$HN_EDITOR*

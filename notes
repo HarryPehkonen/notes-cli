@@ -19,6 +19,13 @@ Read paths are the read endpoints:
     GET /api/tags/:id/notes       -> data[]            (notes carrying a tag)
     GET /api/search?q=            -> data.results[]    (ranked)
 Every response is wrapped: {"success": bool, "data": ..., "meta"?: ...}.
+
+What `--json` prints is the *unwrapped* `data` of that envelope, never the envelope
+itself: the note object (with a top-level "id") for show/create/set/append/prepend/
+restore, a bare array for list/search/tags/versions, whatever the endpoint returns for
+tag/untag/archive. `--json-envelope` prints the server's literal response instead — the
+API's own shape, and the only way to reach meta.total / meta.hasMore, because
+GET /notes is a page. See the README section "JSON output".
 """
 
 import argparse
@@ -114,14 +121,31 @@ def load_auth(path=None, profile=None):
 
 
 class Client:
-    """HTTP seam. Tests replace .request() (or the whole client), never the network."""
+    """HTTP seam. Tests replace .request() (or the whole client), never the network.
+
+    `request()` hands back the unwrapped `data`; `request_full()` hands back the whole
+    response. The whole response is also kept in `.last_payload` — that is what
+    `--json-envelope` prints, and every command prints the response of the request it
+    acts on, which is always the last one it makes (a lookup for an id or a tag name
+    comes first, the write or the note read comes last).
+    """
 
     def __init__(self, base_url, token, timeout=TIMEOUT):
         self.base_url = base_url
         self.token = token
         self.timeout = timeout
+        self.last_payload = None      # the literal body of the last response
 
     def request(self, method, path, params=None, body=None):
+        payload = self.request_full(method, path, params=params, body=body)
+        return payload.get("data") if isinstance(payload, dict) else None
+
+    def request_full(self, method, path, params=None, body=None):
+        """The server's literal payload: {"success": ..., "data": ..., "meta": ...}.
+
+        None for a response with no body (204 on archive, for instance), which is the
+        truthful answer here: --json-envelope prints `null` for it.
+        """
         url = f"{self.base_url}{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
@@ -140,6 +164,7 @@ class Client:
         except urllib.error.URLError as e:
             raise HnError(f"cannot reach {self.base_url}: {e.reason}") from None
         if not raw.strip():
+            self.last_payload = None
             return None
         try:
             payload = json.loads(raw)
@@ -147,7 +172,8 @@ class Client:
             raise HnError(f"server sent non-JSON: {raw[:200]}") from None
         if not payload.get("success", False):
             raise HnError(payload.get("error") or f"request failed: {raw[:200]}")
-        return payload.get("data")
+        self.last_payload = payload
+        return payload
 
     @staticmethod
     def _explain(code, raw):
@@ -175,10 +201,8 @@ def one_line(note):
     return f"{pin}{note.get('id'):>4}  {note.get('title') or '(untitled)'}{suffix}"
 
 
-def show_note(note, raw=False, as_json=False):
-    if as_json:
-        print(json.dumps(note, indent=2, ensure_ascii=False))
-        return
+def show_note(note, raw=False):
+    """One note for a human: --raw is the content alone, else a short header block."""
     content = note.get("content") or ""
     if raw:
         sys.stdout.write(content if content.endswith("\n") else content + "\n")
@@ -237,7 +261,7 @@ def cmd_list(client, args):
     else:
         notes = notes_of(client, args.limit)
     if args.json:
-        print(json.dumps(notes, indent=2, ensure_ascii=False))
+        emit_json(client, notes, args.json)
         return 0
     if not notes:
         print("no notes")
@@ -252,7 +276,11 @@ def cmd_show(client, args):
     which = pick_or_explain(client, args, "note> ", "show")
     if which is None:
         return 1
-    show_note(resolve(client, which), raw=args.raw, as_json=args.json)
+    note = resolve(client, which)
+    if args.json:
+        emit_json(client, note, args.json)
+        return 0
+    show_note(note, raw=args.raw)
     return 0
 
 
@@ -260,7 +288,7 @@ def cmd_search(client, args):
     data = client.get("/search", {"q": args.query}) or {}
     results = (data.get("results") if isinstance(data, dict) else data) or []
     if args.json:
-        print(json.dumps(results, indent=2, ensure_ascii=False))
+        emit_json(client, results, args.json)
         return 0
     if not results:
         print(f"nothing found for {args.query!r}")
@@ -274,7 +302,7 @@ def cmd_search(client, args):
 def cmd_tags(client, args):
     tags = all_tags(client)
     if args.json:
-        print(json.dumps(tags, indent=2, ensure_ascii=False))
+        emit_json(client, tags, args.json)
         return 0
     if not tags:
         print("no tags")
@@ -471,8 +499,15 @@ def with_newline(text):
     return text if not text or text.endswith("\n") else text + "\n"
 
 
-def emit(result):
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+def emit_json(client, value, mode="data"):
+    """The --json printer, both shapes in one place.
+
+    `value` is the unwrapped payload the command computed — the default shape, the one
+    `jq .id` / `jq '.[0].id'` expect. mode "envelope" (--json-envelope) prints what the
+    server actually said instead: the whole {"success", "data", "meta"} response.
+    """
+    print(json.dumps(client.last_payload if mode == "envelope" else value,
+                     indent=2, ensure_ascii=False))
 
 
 def current_note(client, note_id):
@@ -492,7 +527,7 @@ def cmd_create(client, args):
     note = client.request("POST", "/notes",
                           body={"title": args.title, "content": content, "tags": tag_ids})
     if args.json:
-        emit(note)
+        emit_json(client, note, args.json)
     else:
         print(f"created note {(note or {}).get('id')}: {args.title}")
     return 0
@@ -504,7 +539,7 @@ def _join(client, args, prepend):
     new = with_newline(body) + content if prepend else with_newline(content) + body
     result = put_note(client, args.id, title, new)
     if args.json:
-        emit(result)
+        emit_json(client, result, args.json)
     else:
         print(f"note {args.id} {'prepended' if prepend else 'appended'}: "
               f"{len(content)} -> {len(new)} bytes")
@@ -529,7 +564,7 @@ def cmd_set(client, args):
         content = read_body(args.body_file)
     result = put_note(client, args.id, title, content)
     if args.json:
-        emit(result)
+        emit_json(client, result, args.json)
     else:
         print(f"note {args.id} updated")
     return 0
@@ -540,7 +575,7 @@ def _tagging(client, args, adding):
     path = f"/notes/{args.id}/tags/{tag_id}"
     result = client.request("PUT" if adding else "DELETE", path)
     if args.json:
-        emit(result)
+        emit_json(client, result, args.json)
     else:
         print(f"note {args.id}: {'tagged' if adding else 'untagged'} {args.name}")
     return 0
@@ -557,7 +592,7 @@ def cmd_untag(client, args):
 def cmd_archive(client, args):
     result = client.request("DELETE", f"/notes/{args.id}")
     if args.json:
-        emit(result)
+        emit_json(client, result, args.json)
     else:
         print(f"note {args.id} archived (soft delete; still readable by id)")
     return 0
@@ -573,7 +608,7 @@ def versions_of(client, note_id):
 def cmd_versions(client, args):
     versions = versions_of(client, args.id)
     if args.json:
-        print(json.dumps(versions, indent=2, ensure_ascii=False))
+        emit_json(client, versions, args.json)
         return 0
     if not versions:
         print(f"note {args.id} has no saved versions")
@@ -599,7 +634,7 @@ def cmd_restore(client, args):
         _, title, _ = current_note(client, args.id)
     result = put_note(client, args.id, title, v.get("content") or "")
     if args.json:
-        emit(result)
+        emit_json(client, result, args.json)
     else:
         print(f"note {args.id} restored from version {args.version_id}")
     return 0
@@ -628,6 +663,21 @@ def cmd_setup(args, ask=input, ask_secret=getpass.getpass):
 
 # ---------------------------------------------------------------------- main
 
+def add_json_flags(parser):
+    """`--json` and `--json-envelope`, written once for every command that prints JSON.
+
+    Both write the same dest, so the last one on the command line wins and
+    --json-envelope means JSON output without any extra logic. The shapes themselves
+    are documented in README, "JSON output".
+    """
+    parser.add_argument("--json", dest="json", action="store_const", const="data", default=None,
+                        help="the data payload as JSON — the note object (id at the top "
+                             "level), or a bare array; see README, 'JSON output'")
+    parser.add_argument("--json-envelope", dest="json", action="store_const", const="envelope",
+                        help="the server's whole {success, data, meta} response (implies "
+                             "--json); the only way to see meta.total / meta.hasMore")
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog=PROG, description="the CLI for a Notes server")
     p.add_argument("--profile", metavar="NAME",
@@ -637,7 +687,7 @@ def build_parser():
     lp = sub.add_parser("list", aliases=["ls"], help="list notes (pinned first)")
     lp.add_argument("--tag", help="only notes carrying this tag")
     lp.add_argument("--limit", type=int, default=20, help="how many to fetch (default 20)")
-    lp.add_argument("--json", action="store_true", help="raw JSON, for scripting")
+    add_json_flags(lp)
     lp.set_defaults(func=cmd_list)
 
     sp = sub.add_parser("show", aliases=["get"], help="show one note; with no argument, pick one")
@@ -645,14 +695,14 @@ def build_parser():
                     help="an id, or part of a title (omit to pick with fzf)")
     sp.add_argument("--raw", action="store_true",
                     help="content only, for `notes show 92 --raw | vim -` or `| less`")
-    sp.add_argument("--json", action="store_true")
+    add_json_flags(sp)
     sp.add_argument("--no-pick", action="store_true",
                     help="never open the picker: just list what is available")
     sp.set_defaults(func=cmd_show)
 
     qp = sub.add_parser("search", help="full-text search")
     qp.add_argument("query")
-    qp.add_argument("--json", action="store_true")
+    add_json_flags(qp)
     qp.set_defaults(func=cmd_search)
 
     ep = sub.add_parser("edit", help="edit a note's content in $EDITOR (never clobbers)")
@@ -667,7 +717,7 @@ def build_parser():
     ep.set_defaults(func=cmd_edit)
 
     tp = sub.add_parser("tags", help="list tags with note counts")
-    tp.add_argument("--json", action="store_true")
+    add_json_flags(tp)
     tp.set_defaults(func=cmd_tags)
 
     def target(name, help_, with_body=False, body_required=False, with_name=False, json_flag=True):
@@ -680,7 +730,7 @@ def build_parser():
             sp_.add_argument("--body-file", required=body_required,
                              help="file to read the text from ('-' for stdin)")
         if json_flag:
-            sp_.add_argument("--json", action="store_true", help="print the API response as JSON")
+            add_json_flags(sp_)
         return sp_
 
     cp = target("create", "create a note", with_body=True, body_required=True)

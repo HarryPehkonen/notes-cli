@@ -82,6 +82,43 @@ through the API. `append`, `prepend`, `set` and `restore` send title and content
 never tags. If the server's versions endpoint returns no `version_id` field, `restore`
 prints the versions as JSON and points you at `notes set`.
 
+Every command that takes `--json` also takes `--json-envelope` — see *JSON output*.
+
+## JSON output
+
+`--json` prints the **unwrapped** payload: the `data` of the server's
+`{"success": true, "data": ..., "meta"?: ...}` envelope, and nothing else. The shape is
+the data shape, per command:
+
+| command | `--json` prints |
+|---|---|
+| `show`, `create`, `set`, `append`, `prepend`, `restore` | the note object — **`id` at the top level**, not under `data` |
+| `list`, `list --tag`, `search`, `tags`, `versions` | a bare JSON **array** |
+| `tag`, `untag`, `archive` | the same rule: that endpoint's `data`; a response with no body (`archive` is a 204) prints `null` |
+
+So the id of the note you just created is `.id`, at the top level, and a successful
+write cannot be mistaken for a failed one:
+
+    notes create --title T --body-file T.md --json | jq .id     # 127
+    notes list --json | jq '.[0].id'                            # stable jq pipeline
+
+`--json-envelope` (it implies `--json`) prints the server's response **whole** instead —
+literally what the API returned, envelope and all:
+
+    notes create --title T --body-file T.md --json-envelope | jq .data.id
+    notes list --json-envelope | jq '.meta.total'
+
+It is always the response of the request the command acts on: for `list --tag`, the
+`/tags/:id/notes` page, not the `/tags` lookup that resolved the name.
+
+Use it when you want the API's own shape (`jq .data…`), or the page metadata: `meta` — so
+`meta.total` and `meta.hasMore` — is reachable **only** through this flag, because
+`GET /notes` returns a page and the default output drops the wrapper. Never infer a total
+from the length of the array.
+
+Both shapes are pinned in `tests/test_json_contract.py`: the unwrapped default is a
+contract, not an accident.
+
 ## Use
 
     notes list --tag c++          # notes carrying a tag
@@ -92,6 +129,7 @@ prints the versions as JSON and points you at `notes set`.
     echo "- buy milk" | notes append 47 --body-file -
     notes create --title "Trip" --body-file plan.md --tag travel --task "book flights"
     notes list --json | jq '.[0].id'
+    notes list --json-envelope | jq '.meta.total'   # the page metadata the default drops
 
 `notes` does not invoke `$PAGER` for you: `notes show 98 | less` works with whatever
 pager you already use.
