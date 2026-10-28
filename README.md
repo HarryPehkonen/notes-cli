@@ -15,7 +15,7 @@ Version 1.0.0.
   `alias n=notes`, or `ln -s ~/src/notes/notes ~/.local/bin/n`.
 - **Several servers?** `notes --profile work list` reads
   `~/.config/notes-cli/auth.work.json`; `notes setup --profile work` creates it.
-- **Optional niceties, never requirements:** `$EDITOR` (or `$VISUAL`, `$HN_EDITOR`) for
+- **Optional niceties, never requirements:** `$EDITOR` (or `$VISUAL`, `$NOTES_EDITOR`) for
   `notes edit`; [fzf](https://github.com/junegunn/fzf) for the no-argument picker;
   `NO_COLOR` is honoured (notes prints no colour today, so it is always safe).
 
@@ -45,13 +45,11 @@ and the token (hidden input, never echoed, never on a command line) and writes
 
 Where credentials come from, highest priority first:
 
-1. `HN_AUTH_FILE` — explicit path to an auth file (the tests use this)
+1. `NOTES_AUTH_FILE` — explicit path to an auth file (the tests use this)
 2. `NOTES_TOKEN` (with `NOTES_BASE_URL`, default `https://harrisnotes.ca/api`) — env
    vars win over any file in the config directory; handy for CI and containers
 3. `--profile NAME` — `~/.config/notes-cli/auth.NAME.json`
 4. `~/.config/notes-cli/auth.json`
-5. `~/.config/hn/auth.json` — legacy location from before the rename, still honoured
-   (kept only for compatibility; `notes setup` writes the current path)
 
 `notes` refuses to use an auth file that is group- or world-readable, and never prints
 the token. Tokens are minted per machine inside the Notes app, so revoking one machine

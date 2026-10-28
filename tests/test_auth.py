@@ -13,7 +13,7 @@ from pathlib import Path
 import test_client  # noqa: E402
 
 notes = test_client.notes
-KEYS = ("HOME", "HN_AUTH_FILE", "NOTES_TOKEN", "NOTES_BASE_URL")
+KEYS = ("HOME", "NOTES_AUTH_FILE", "NOTES_TOKEN", "NOTES_BASE_URL")
 
 
 class AuthEnv(unittest.TestCase):
@@ -43,15 +43,6 @@ class PrecedenceTests(AuthEnv):
     def test_new_path(self):
         self.write(".config/notes-cli/auth.json", "https://new/api", "tnew")
         self.assertEqual(notes.load_auth(), ("https://new/api", "tnew"))
-
-    def test_legacy_fallback(self):
-        self.write(".config/hn/auth.json", "https://old/api", "told")
-        self.assertEqual(notes.load_auth(), ("https://old/api", "told"))
-
-    def test_new_beats_legacy(self):
-        self.write(".config/hn/auth.json", "https://old/api", "told")
-        self.write(".config/notes-cli/auth.json", "https://new/api", "tnew")
-        self.assertEqual(notes.load_auth()[1], "tnew")
 
     def test_profile_path(self):
         self.write(".config/notes-cli/auth.json", "https://new/api", "tnew")
@@ -86,9 +77,9 @@ class PrecedenceTests(AuthEnv):
         with self.assertRaises(notes.NotesError):
             notes.load_auth()
 
-    def test_legacy_auth_file_beats_env_token(self):
+    def test_auth_file_env_beats_env_token(self):
         p = self.write("custom.json", "https://custom/api", "tcustom")
-        os.environ["HN_AUTH_FILE"] = str(p)
+        os.environ["NOTES_AUTH_FILE"] = str(p)
         os.environ["NOTES_TOKEN"] = "tenv"
         self.assertEqual(notes.load_auth(), ("https://custom/api", "tcustom"))
 

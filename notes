@@ -5,11 +5,10 @@ Stdlib only: no dependencies, no build step. One executable file.
 
 The API token is never passed on a command line, never printed, and never included
 in an error message. Where it comes from, highest priority first:
-    1. HN_AUTH_FILE            explicit path to an auth file
+    1. NOTES_AUTH_FILE            explicit path to an auth file
     2. NOTES_TOKEN             (+ NOTES_BASE_URL, default https://harrisnotes.ca/api)
     3. --profile NAME          ~/.config/notes-cli/auth.NAME.json
     4. ~/.config/notes-cli/auth.json
-    5. ~/.config/hn/auth.json  (legacy fallback)
 Auth files must be mode 600. `notes setup` writes one.
 
 Read paths are the read endpoints:
@@ -65,10 +64,6 @@ def config_dir():
     return Path.home() / ".config" / "notes-cli"
 
 
-def legacy_auth_path():
-    return Path.home() / ".config" / "hn" / "auth.json"
-
-
 def check_profile(profile):
     if not PROFILE_RE.match(profile):
         raise NotesError(f"bad profile name {profile!r} — use letters, digits, '_', '-', '.'")
@@ -88,7 +83,7 @@ def check_base_url(base, where):
 
 def load_auth(path=None, profile=None):
     """Return (base_url, token); see the module docstring for the precedence."""
-    path = path or os.environ.get("HN_AUTH_FILE")
+    path = path or os.environ.get("NOTES_AUTH_FILE")
     if not path and os.environ.get("NOTES_TOKEN"):
         base = os.environ.get("NOTES_BASE_URL") or DEFAULT_BASE_URL
         return check_base_url(base, "NOTES_BASE_URL"), os.environ["NOTES_TOKEN"]
@@ -97,8 +92,6 @@ def load_auth(path=None, profile=None):
             path = profile_path(profile)
         else:
             path = profile_path()
-            if not path.exists() and legacy_auth_path().exists():
-                path = legacy_auth_path()
     p = Path(path)
     if not p.exists():
         raise NotesError(
@@ -389,8 +382,8 @@ EDITOR_FALLBACK = "vi"
 
 
 def editor_command(override=None):
-    """--editor, then $HN_EDITOR, $VISUAL, $EDITOR, then vi. May contain arguments."""
-    for candidate in (override, os.environ.get("HN_EDITOR"), os.environ.get("VISUAL"),
+    """--editor, then $NOTES_EDITOR, $VISUAL, $EDITOR, then vi. May contain arguments."""
+    for candidate in (override, os.environ.get("NOTES_EDITOR"), os.environ.get("VISUAL"),
                       os.environ.get("EDITOR"), EDITOR_FALLBACK):
         if candidate:
             return shlex.split(candidate)
@@ -708,7 +701,7 @@ def build_parser():
     ep = sub.add_parser("edit", help="edit a note's content in $EDITOR (never clobbers)")
     ep.add_argument("which", nargs="?",
                     help="an id, or a unique part of the title (omit to pick with fzf)")
-    ep.add_argument("--editor", help="editor to run (default $HN_EDITOR, $VISUAL, $EDITOR, vi)")
+    ep.add_argument("--editor", help="editor to run (default $NOTES_EDITOR, $VISUAL, $EDITOR, vi)")
     ep.add_argument("--content-file", help="take the new content from this file (no editor)")
     ep.add_argument("--dry-run", action="store_true", help="say what would be sent, send nothing")
     ep.add_argument("--no-pick", action="store_true",
@@ -763,7 +756,7 @@ def build_parser():
     return p
 
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 def main(argv=None):

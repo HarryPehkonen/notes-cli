@@ -36,7 +36,7 @@ reads _auth.work.json_.
 
 *create* <title> [body...]
 	Create a note. Content is read from the editor ($EDITOR, $VISUAL or
-	$HN_EDITOR) or given inline.
+	$NOTES_EDITOR) or given inline.
 
 *edit* <id>
 	Edit a note's content in the editor; never clobbers.
@@ -88,7 +88,7 @@ reads _auth.work.json_.
 
 # ENVIRONMENT
 
-*$EDITOR*, *$VISUAL*, *$HN_EDITOR*
+*$EDITOR*, *$VISUAL*, *$NOTES_EDITOR*
 	Editor used by *create* and *edit*.
 
 # SEE ALSO
