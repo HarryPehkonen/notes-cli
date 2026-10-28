@@ -149,7 +149,7 @@ envelope) rather than whatever the server happens to do today.
 
 `fzf` is **optional** — never a dependency. If it is installed *and* there is a
 terminal, `notes show` / `notes edit` with no argument open a picker. If fzf is missing, or
-the output is piped, or `$HN_FZF` points somewhere useless, notes prints the list, says
+the output is piped, or `$NOTES_FZF` points somewhere useless, notes prints the list, says
 why it could not pick, and exits 1 without touching anything:
 
     fzf is not installed (or there is no terminal here), so notes cannot pick
@@ -157,7 +157,7 @@ why it could not pick, and exits 1 without touching anything:
         notes show <id or part of a title>
 
 A cancelled picker (Esc, Ctrl-C) writes nothing, which is what makes `notes edit` with no
-argument safe to abort. Point notes at a specific fzf binary with `$HN_FZF`.
+argument safe to abort. Point notes at a specific fzf binary with `$NOTES_FZF`.
 
 ## Editing safely
 

@@ -4,7 +4,7 @@
     python3 -m unittest discover -s tests -v
 
 The API is replaced by FakeClient, so these run offline and in CI. The one live
-test is skipped unless HN_LIVE=1 (it talks to the real Notes API).
+test is skipped unless NOTES_LIVE=1 (it talks to the real Notes API).
 """
 
 import importlib.machinery

@@ -37,19 +37,19 @@ def stub_fzf(tmp, behaviour):
 class PickerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self._saved = (notes.can_pick, os.environ.get("HN_FZF"))
+        self._saved = (notes.can_pick, os.environ.get("NOTES_FZF"))
         notes.can_pick = lambda: True            # pretend we have a terminal
 
     def tearDown(self):
         notes.can_pick, old = self._saved
         if old is None:
-            os.environ.pop("HN_FZF", None)
+            os.environ.pop("NOTES_FZF", None)
         else:
-            os.environ["HN_FZF"] = old
+            os.environ["NOTES_FZF"] = old
 
     def test_no_fzf_lists_notes_and_explains(self):
         notes.can_pick = lambda: False           # no fzf, or no terminal
-        os.environ.pop("HN_FZF", None)
+        os.environ.pop("NOTES_FZF", None)
         p = Path(self.tmp) / "path-without-fzf"
         p.mkdir()
         old_path = os.environ["PATH"]
@@ -65,7 +65,7 @@ class PickerTests(unittest.TestCase):
 
     def test_choice_from_fzf_is_used(self):
         fzf, stdin_dump, _ = stub_fzf(self.tmp, "choose")
-        os.environ["HN_FZF"] = fzf
+        os.environ["NOTES_FZF"] = fzf
         rc, out, _ = run(["show"], FakeClient())
         self.assertEqual(rc, 0)
         # the stub picks line 2, whose id is 98 -> that note is what we show
@@ -76,7 +76,7 @@ class PickerTests(unittest.TestCase):
 
     def test_cancelled_picker_does_nothing(self):
         fzf, _, marker = stub_fzf(self.tmp, "cancel")
-        os.environ["HN_FZF"] = fzf
+        os.environ["NOTES_FZF"] = fzf
         rc, out, err = run(["show"], FakeClient())
         self.assertEqual(rc, 1)
         self.assertTrue(marker.exists(), "the picker should have been offered")
@@ -85,7 +85,7 @@ class PickerTests(unittest.TestCase):
     def test_cancelled_edit_writes_nothing(self):
         """The one that matters: Esc in the picker must not touch the server."""
         fzf, _, _ = stub_fzf(self.tmp, "cancel")
-        os.environ["HN_FZF"] = fzf
+        os.environ["NOTES_FZF"] = fzf
         c = EditClient()
         rc, out, err = run(["edit"], c)
         self.assertEqual(rc, 1)
@@ -93,7 +93,7 @@ class PickerTests(unittest.TestCase):
 
     def test_no_pick_flag_lists_and_never_runs_fzf(self):
         fzf, _, marker = stub_fzf(self.tmp, "choose")
-        os.environ["HN_FZF"] = fzf
+        os.environ["NOTES_FZF"] = fzf
         rc, out, _ = run(["show", "--no-pick"], FakeClient())
         self.assertEqual(rc, 1)
         self.assertFalse(marker.exists(), "--no-pick must not run the picker")
@@ -101,7 +101,7 @@ class PickerTests(unittest.TestCase):
 
     def test_an_argument_never_opens_the_picker(self):
         fzf, _, marker = stub_fzf(self.tmp, "choose")
-        os.environ["HN_FZF"] = fzf
+        os.environ["NOTES_FZF"] = fzf
         rc, out, _ = run(["show", "47"], FakeClient())
         self.assertEqual(rc, 0)
         self.assertFalse(marker.exists(), "an explicit note must not open a picker")
@@ -110,7 +110,7 @@ class PickerTests(unittest.TestCase):
     def test_pick_then_edit_goes_through_the_lock_path(self):
         """Picking a note then editing it still sends the lock."""
         fzf, _, _ = stub_fzf(self.tmp, "choose")     # picks line 2 -> id 98
-        os.environ["HN_FZF"] = fzf
+        os.environ["NOTES_FZF"] = fzf
         c = EditClient(note={"id": 98, "title": "JSOM: conformance verdict",
                              "updated_at": "2026-09-16T05:00:00Z", "content": "old\n"})
         out_file = Path(self.tmp) / "new.md"

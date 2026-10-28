@@ -322,8 +322,8 @@ Notes you could have picked:"""
 
 
 def fzf_path():
-    """The fzf to use: $HN_FZF if set, otherwise whatever is on $PATH."""
-    return os.environ.get("HN_FZF") or shutil.which("fzf")
+    """The fzf to use: $NOTES_FZF if set, otherwise whatever is on $PATH."""
+    return os.environ.get("NOTES_FZF") or shutil.which("fzf")
 
 
 def can_pick():
@@ -756,7 +756,7 @@ def build_parser():
     return p
 
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 
 
 def main(argv=None):
