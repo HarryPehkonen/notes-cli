@@ -11,8 +11,8 @@ Version 1.0.0.
 - **Point it at your server.** `notes setup` asks for a base URL. Use
   `https://harrisnotes.ca/api`, or any Notes deployment you run yourself — self-hosting
   is a first-class setup, not an afterthought. Nothing in the client is tied to one host.
-- **Alias it to your initials.** The binary is `notes`; make it `hn`, `jn`, ...:
-  `alias hn=notes`, or `ln -s ~/src/notes/notes ~/.local/bin/hn`.
+- **Alias it to something short.** The binary is `notes`; give it a shorter name if you like:
+  `alias n=notes`, or `ln -s ~/src/notes/notes ~/.local/bin/n`.
 - **Several servers?** `notes --profile work list` reads
   `~/.config/notes-cli/auth.work.json`; `notes setup --profile work` creates it.
 - **Optional niceties, never requirements:** `$EDITOR` (or `$VISUAL`, `$HN_EDITOR`) for
@@ -21,7 +21,7 @@ Version 1.0.0.
 
 ## Install
 
-    git clone https://github.com/HarryPehkonen/hn.git ~/src/notes
+    git clone https://github.com/HarryPehkonen/notes-cli.git ~/src/notes
     ln -sf ~/src/notes/notes ~/.local/bin/notes     # or anywhere on $PATH
     notes setup
     notes version
@@ -51,6 +51,7 @@ Where credentials come from, highest priority first:
 3. `--profile NAME` — `~/.config/notes-cli/auth.NAME.json`
 4. `~/.config/notes-cli/auth.json`
 5. `~/.config/hn/auth.json` — legacy location from before the rename, still honoured
+   (kept only for compatibility; `notes setup` writes the current path)
 
 `notes` refuses to use an auth file that is group- or world-readable, and never prints
 the token. Tokens are minted per machine inside the Notes app, so revoking one machine
@@ -178,8 +179,8 @@ exact command to retry:
 
     notes: note 98 changed on the server since you started — NOTHING was written.
       server now: 2026-09-16T18:23:52.418Z  (31 bytes)
-      your edits: /tmp/hn-edit-98-ab12cd34/note-98.md  (30 bytes — kept)
-      re-run:     notes edit 98 --content-file /tmp/hn-edit-98-ab12cd34/note-98.md
+      your edits: /tmp/notes-edit-98-ab12cd34/note-98.md  (30 bytes — kept)
+      re-run:     notes edit 98 --content-file /tmp/notes-edit-98-ab12cd34/note-98.md
 
 The temp file is created in a private directory (dir 700, file 600) and removed after
 a successful write. If the editor exits non-zero, or deletes the file, nothing is

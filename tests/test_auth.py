@@ -10,9 +10,9 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-import test_hn  # noqa: E402
+import test_client  # noqa: E402
 
-notes = test_hn.notes
+notes = test_client.notes
 KEYS = ("HOME", "HN_AUTH_FILE", "NOTES_TOKEN", "NOTES_BASE_URL")
 
 
@@ -60,12 +60,12 @@ class PrecedenceTests(AuthEnv):
 
     def test_missing_profile_does_not_fall_back(self):
         self.write(".config/notes-cli/auth.json", "https://new/api", "tnew")
-        with self.assertRaises(notes.HnError) as cm:
+        with self.assertRaises(notes.NotesError) as cm:
             notes.load_auth(profile="nope")
         self.assertIn("auth.nope.json", str(cm.exception))
 
     def test_bad_profile_name_rejected(self):
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             notes.load_auth(profile="../evil")
 
     def test_env_token_beats_files_and_profile(self):
@@ -83,10 +83,10 @@ class PrecedenceTests(AuthEnv):
     def test_env_base_url_must_be_http(self):
         os.environ["NOTES_TOKEN"] = "tenv"
         os.environ["NOTES_BASE_URL"] = "ftp://x"
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             notes.load_auth()
 
-    def test_hn_auth_file_beats_env_token(self):
+    def test_legacy_auth_file_beats_env_token(self):
         p = self.write("custom.json", "https://custom/api", "tcustom")
         os.environ["HN_AUTH_FILE"] = str(p)
         os.environ["NOTES_TOKEN"] = "tenv"
@@ -94,12 +94,12 @@ class PrecedenceTests(AuthEnv):
 
     def test_mode_still_enforced_on_new_path(self):
         self.write(".config/notes-cli/auth.json", "https://new/api", "tnew", mode=0o644)
-        with self.assertRaises(notes.HnError) as cm:
+        with self.assertRaises(notes.NotesError) as cm:
             notes.load_auth()
         self.assertIn("chmod 600", str(cm.exception))
 
     def test_nothing_configured_points_at_setup(self):
-        with self.assertRaises(notes.HnError) as cm:
+        with self.assertRaises(notes.NotesError) as cm:
             notes.load_auth()
         self.assertIn("notes setup", str(cm.exception))
 
@@ -137,11 +137,11 @@ class SetupTests(AuthEnv):
         self.assertTrue((self.home / ".config/notes-cli/auth.home.json").exists())
 
     def test_empty_token_rejected(self):
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             self.run_setup(["setup"], [""], secret="  ")
 
     def test_bad_url_rejected_and_nothing_written(self):
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             self.run_setup(["setup"], ["ftp://x"])
         self.assertFalse((self.home / ".config/notes-cli/auth.json").exists())
 

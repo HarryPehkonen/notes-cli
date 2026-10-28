@@ -24,10 +24,10 @@ from io import StringIO
 from pathlib import Path
 from unittest import mock
 
-import test_hn  # noqa: E402
-from test_hn import run  # noqa: E402
+import test_client  # noqa: E402
+from test_client import run  # noqa: E402
 
-notes = test_hn.notes
+notes = test_client.notes
 
 NOTE = {"id": 127, "title": "T", "content": "b\n", "tags": []}
 # The API's own shapes: every response is wrapped, and GET /notes carries a page.

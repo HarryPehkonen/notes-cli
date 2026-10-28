@@ -49,7 +49,7 @@ TIMEOUT = 20
 PROFILE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 
 
-class HnError(Exception):
+class NotesError(Exception):
     """Anything worth showing the user instead of a traceback.
 
     Carries the HTTP status when there is one, so callers can react to a specific
@@ -71,7 +71,7 @@ def legacy_auth_path():
 
 def check_profile(profile):
     if not PROFILE_RE.match(profile):
-        raise HnError(f"bad profile name {profile!r} — use letters, digits, '_', '-', '.'")
+        raise NotesError(f"bad profile name {profile!r} — use letters, digits, '_', '-', '.'")
     return profile
 
 
@@ -82,7 +82,7 @@ def profile_path(profile=None):
 def check_base_url(base, where):
     base = (base or "").rstrip("/")
     if not base.startswith(("http://", "https://")):
-        raise HnError(f"{where}: base_url must be an http(s) URL")
+        raise NotesError(f"{where}: base_url must be an http(s) URL")
     return base
 
 
@@ -101,7 +101,7 @@ def load_auth(path=None, profile=None):
                 path = legacy_auth_path()
     p = Path(path)
     if not p.exists():
-        raise HnError(
+        raise NotesError(
             f"no auth file at {p}\n"
             "Run `notes setup" + (f" --profile {profile}" if profile else "") + "` "
             "(the token is prompted for, so it never reaches the shell history),\n"
@@ -109,14 +109,14 @@ def load_auth(path=None, profile=None):
         )
     mode = p.stat().st_mode & 0o777
     if mode & 0o077:
-        raise HnError(f"{p} is mode {oct(mode)} and holds a token — chmod 600 it")
+        raise NotesError(f"{p} is mode {oct(mode)} and holds a token — chmod 600 it")
     try:
         d = json.loads(p.read_text())
     except (OSError, ValueError) as e:
-        raise HnError(f"cannot read {p}: {e}")
+        raise NotesError(f"cannot read {p}: {e}")
     for key in ("base_url", "token"):
         if not d.get(key):
-            raise HnError(f"{p} has no {key!r} — re-run `notes setup`")
+            raise NotesError(f"{p} has no {key!r} — re-run `notes setup`")
     return check_base_url(d["base_url"], str(p)), d["token"]
 
 
@@ -160,18 +160,18 @@ class Client:
                 raw = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", "replace")
-            raise HnError(self._explain(e.code, raw), status=e.code) from None
+            raise NotesError(self._explain(e.code, raw), status=e.code) from None
         except urllib.error.URLError as e:
-            raise HnError(f"cannot reach {self.base_url}: {e.reason}") from None
+            raise NotesError(f"cannot reach {self.base_url}: {e.reason}") from None
         if not raw.strip():
             self.last_payload = None
             return None
         try:
             payload = json.loads(raw)
         except ValueError:
-            raise HnError(f"server sent non-JSON: {raw[:200]}") from None
+            raise NotesError(f"server sent non-JSON: {raw[:200]}") from None
         if not payload.get("success", False):
-            raise HnError(payload.get("error") or f"request failed: {raw[:200]}")
+            raise NotesError(payload.get("error") or f"request failed: {raw[:200]}")
         self.last_payload = payload
         return payload
 
@@ -236,7 +236,7 @@ def find_tag_id(client, name):
     for t in all_tags(client):
         if (t.get("name") or "").lower() == name.lower():
             return t["id"]
-    raise HnError(f"no tag named {name!r} (see `notes tags`)")
+    raise NotesError(f"no tag named {name!r} (see `notes tags`)")
 
 
 def resolve(client, which):
@@ -245,10 +245,10 @@ def resolve(client, which):
         return client.get(f"/notes/{int(which)}")
     hits = [n for n in notes_of(client) if which.lower() in (n.get("title") or "").lower()]
     if not hits:
-        raise HnError(f"no note matches {which!r}")
+        raise NotesError(f"no note matches {which!r}")
     if len(hits) > 1:
         listing = "\n".join("  " + one_line(n) for n in hits[:12])
-        raise HnError(f"{len(hits)} notes match {which!r} — use an id:\n{listing}")
+        raise NotesError(f"{len(hits)} notes match {which!r} — use an id:\n{listing}")
     return client.get(f"/notes/{hits[0]['id']}")
 
 
@@ -317,8 +317,8 @@ def cmd_tags(client, args):
 # -------------------------------------------------------------------- picking
 #
 # fzf is a convenience, never a dependency: if it is missing, or there is no
-# terminal to draw in, hn prints the list and says how to get the picker. Nothing
-# about hn requires it, so a machine without fzf keeps working exactly as before.
+# terminal to draw in, the CLI prints the list and says how to get the picker. Nothing
+# requires it, so a machine without fzf keeps working exactly as before.
 
 PICK_HINT = """fzf is not installed (or there is no terminal here), so notes cannot pick
 interactively. Install fzf for the picker, or name a note directly:
@@ -381,7 +381,7 @@ def pick_or_explain(client, args, prompt, cmd_name):
 # The rule for everything below: the user's text is never at risk. A conflict, a
 # crashed editor or a changed note must leave the edited text on disk and must not
 # write anything to the server. The lock is the note's updated_at: the server
-# answers 409 when it has moved, and hn checks the same thing itself first, because
+# answers 409 when it has moved, and the CLI checks the same thing itself first, because
 # a client that sends the wrong field name is silently unprotected (measured:
 # updated_at is the one the server honours; updatedAt/contentVersion are ignored).
 
@@ -399,7 +399,7 @@ def editor_command(override=None):
 
 def temp_note_file(note_id, content):
     """A private directory holding the note body: dir 700, file 600."""
-    d = Path(tempfile.mkdtemp(prefix=f"hn-edit-{note_id}-"))
+    d = Path(tempfile.mkdtemp(prefix=f"notes-edit-{note_id}-"))
     os.chmod(d, 0o700)
     p = d / f"note-{note_id}.md"
     p.write_text(content)
@@ -437,11 +437,11 @@ def cmd_edit(client, args):
             print(f"editing note {note_id} with '{cmd[0]}' (temp file {path})", file=sys.stderr)
         rc = subprocess.call(cmd)
         if rc != 0:
-            raise HnError(f"the editor exited {rc} — nothing was written;\n"
+            raise NotesError(f"the editor exited {rc} — nothing was written;\n"
                           f"  your text is still at {path}")
         if not path.exists():
             shutil.rmtree(path.parent, ignore_errors=True)
-            raise HnError(f"the editor removed {path.parent} — nothing was written")
+            raise NotesError(f"the editor removed {path.parent} — nothing was written")
         edited = path.read_text()
 
     def tidy():
@@ -463,13 +463,13 @@ def cmd_edit(client, args):
 
     fresh = client.get(f"/notes/{note_id}")
     if fresh.get("updated_at") != started_from:
-        raise HnError(conflict_message(note_id, fresh, path))
+        raise NotesError(conflict_message(note_id, fresh, path))
 
     try:
         result = client.request("PUT", f"/notes/{note_id}", body=body)
-    except HnError as e:
+    except NotesError as e:
         if e.status == 409:
-            raise HnError(conflict_message(note_id, client.get(f"/notes/{note_id}"), path)) from None
+            raise NotesError(conflict_message(note_id, client.get(f"/notes/{note_id}"), path)) from None
         raise
 
     now = (result or {}).get("updated_at") if isinstance(result, dict) else None
@@ -492,7 +492,7 @@ def read_body(path):
     try:
         return Path(path).read_text()
     except OSError as e:
-        raise HnError(f"cannot read {path}: {e.strerror or e}")
+        raise NotesError(f"cannot read {path}: {e.strerror or e}")
 
 
 def with_newline(text):
@@ -556,7 +556,7 @@ def cmd_prepend(client, args):
 
 def cmd_set(client, args):
     if args.title is None and args.body_file is None:
-        raise HnError("nothing to set: give --title and/or --body-file")
+        raise NotesError("nothing to set: give --title and/or --body-file")
     _, title, content = current_note(client, args.id)
     if args.title is not None:
         title = args.title
@@ -624,10 +624,10 @@ def cmd_versions(client, args):
 def cmd_restore(client, args):
     versions = versions_of(client, args.id)
     if not versions:
-        raise HnError(f"note {args.id} has no saved versions")
+        raise NotesError(f"note {args.id} has no saved versions")
     match = [v for v in versions if str(v.get("id")) == str(args.version_id)]
     if not match:
-        raise HnError(f"note {args.id} has no version {args.version_id} (see `notes versions {args.id}`)")
+        raise NotesError(f"note {args.id} has no version {args.version_id} (see `notes versions {args.id}`)")
     v = match[0]
     title = v.get("title")
     if not title:
@@ -650,7 +650,7 @@ def cmd_setup(args, ask=input, ask_secret=getpass.getpass):
     base = check_base_url(base, "base URL")
     token = ask_secret("API token (input hidden): ").strip()
     if not token:
-        raise HnError("no token given — nothing written")
+        raise NotesError("no token given — nothing written")
     target.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(target.parent, 0o700)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -773,7 +773,7 @@ def main(argv=None):
             return cmd_setup(args)
         base_url, token = load_auth(profile=args.profile)
         return args.func(Client(base_url, token), args)
-    except HnError as e:
+    except NotesError as e:
         print(f"{PROG}: {e}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

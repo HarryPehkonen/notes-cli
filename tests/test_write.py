@@ -10,10 +10,10 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
-import test_hn  # noqa: E402
-from test_hn import NOTE_PINNED, NOTE_TAGGED, FakeClient, run  # noqa: E402
+import test_client  # noqa: E402
+from test_client import NOTE_PINNED, NOTE_TAGGED, FakeClient, run  # noqa: E402
 
-notes = test_hn.notes
+notes = test_client.notes
 
 
 class WriteClient(FakeClient):
@@ -65,7 +65,7 @@ class CreateTests(unittest.TestCase):
 
     def test_unknown_tag_is_an_error_and_writes_nothing(self):
         c = WriteClient()
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             run(["create", "--title", "T", "--body-file", body_file("x"), "--tag", "nope"], c)
         self.assertEqual(c.writes, [])
 
@@ -151,7 +151,7 @@ class EditContentTests(unittest.TestCase):
 
     def test_set_with_nothing_to_set_is_an_error(self):
         c = WriteClient()
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             run(["set", "47"], c)
         self.assertEqual(c.writes, [])
 
@@ -176,7 +176,7 @@ class TagArchiveTests(unittest.TestCase):
 
     def test_tag_unknown_name_errors(self):
         c = WriteClient()
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             run(["tag", "47", "nope"], c)
         self.assertEqual(c.writes, [])
 
@@ -223,13 +223,13 @@ class VersionTests(unittest.TestCase):
 
     def test_restore_unknown_version_errors(self):
         c = WriteClient(versions=VERSIONS)
-        with self.assertRaises(notes.HnError):
+        with self.assertRaises(notes.NotesError):
             run(["restore", "47", "99"], c)
         self.assertEqual(c.writes, [])
 
     def test_restore_no_versions_errors(self):
         c = WriteClient(versions=[])
-        with self.assertRaises(notes.HnError) as cm:
+        with self.assertRaises(notes.NotesError) as cm:
             run(["restore", "47", "1"], c)
         self.assertIn("no saved versions", str(cm.exception))
         self.assertEqual(c.writes, [])

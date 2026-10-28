@@ -11,11 +11,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import test_hn
+import test_client
 from test_edit import EditClient
-from test_hn import FakeClient, run
+from test_client import FakeClient, run
 
-notes = test_hn.notes
+notes = test_client.notes
 
 
 def stub_fzf(tmp, behaviour):
