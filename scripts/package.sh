@@ -95,7 +95,10 @@ install -m 644 LICENSE %{buildroot}%{_datadir}/doc/%{name}/copyright
 EOF
   rpmbuild --define "_topdir $(pwd)/$tree" -bb "$tree/SPECS/notes-cli.spec" >/dev/null
   mv "$tree"/RPMS/noarch/notes-cli-*.rpm dist/
-  rpm=$(ls dist/notes-cli-*.noarch.rpm)
+  # Pin the version just built: a glob would also pick up older builds still
+  # sitting in dist/, and the assert below would then receive several paths.
+  rpm="dist/notes-cli-$VERSION-1.noarch.rpm"
+  [ -f "$rpm" ] || { echo "RPM NOT BUILT: $rpm"; exit 1; }
 
   # Assert contents: exactly the binary, the man page, the copyright file.
   c=$(rpm -qlp "$rpm" | grep -cE '/usr/bin/notes$|/usr/share/man/man1/notes\.1|/usr/share/doc/notes-cli/copyright$')

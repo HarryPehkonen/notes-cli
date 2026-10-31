@@ -64,7 +64,7 @@ does not disturb the others.
 | `notes search <query> [--json]` | full-text search |
 | `notes tags [--json]` | tags with note counts |
 | `notes edit [<id>] [--editor E] [--content-file F] [--dry-run]` | edit in `$EDITOR`, never clobbers |
-| `notes create --title T --body-file F [--tag t]... [--task "..."]... [--json]` | new note |
+| `notes create --title T --body-file F [--tag t]... [--task "..."]... [--format {markdown,groff}] [--json]` | new note |
 | `notes append ID --body-file F [--json]` | add text at the end |
 | `notes prepend ID --body-file F [--json]` | add text at the start |
 | `notes set ID [--title T] [--body-file F] [--json]` | replace title and/or content |
@@ -80,6 +80,24 @@ adds a `- [ ] item` line to the end of the content. Tag names are resolved to id
 through the API. `append`, `prepend`, `set` and `restore` send title and content only,
 never tags. If the server's versions endpoint returns no `version_id` field, `restore`
 prints the versions as JSON and points you at `notes set`.
+
+### groff notes
+
+`notes create` can also create a note whose content is **raw groff** rather than markdown:
+
+    notes create --title "Buttermilk pancakes" --tag recipe --format groff \
+        --body-file pancakes.ms
+
+The body is then the *source of the document*, not a description of it, and the server
+derives a markdown projection for reading and for search. A note's format is fixed at
+creation and never changes afterwards, so a note that will be printed has to be created
+with `--format groff`; a markdown note stays markdown. `notes show --raw`, `notes edit`
+and `notes set` all work on the raw source and leave the format alone. `--task` appends
+markdown checkboxes, so it is refused together with `--format groff`.
+
+The house macros, a worked recipe example and the render command live with the server, in
+the Notes repository (`docs/groff-guide.md`, `groff/examples/`). Printing from inside the
+app is not built yet, so rendering happens on a machine that has groff installed.
 
 Every command that takes `--json` also takes `--json-envelope` — see *JSON output*.
 

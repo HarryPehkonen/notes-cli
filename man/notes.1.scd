@@ -25,27 +25,34 @@ reads _auth.work.json_.
 	it never reaches shell history.
 
 *list*, *ls*
-	List notes, pinned first.
+	List notes, pinned first. *--tag* filters by tag; *--limit* caps the page.
 
-*show* [<id>], *get* [<id>]
-	Show one note; with no argument, pick one interactively.
+*show* [<which>], *get* [<which>]
+	Show one note, by id or unique title substring. With no argument, pick one
+	interactively. *--raw* prints the stored body exactly as stored - for a
+	groff note that is the groff source, not a rendered projection of it.
 
 *search* <query>
 	Full-text search. Bare words match text or tags; a _#tag_ term is a strict
 	tag filter.
 
-*create* <title> [body...]
-	Create a note. Content is read from the editor ($EDITOR, $VISUAL or
-	$NOTES_EDITOR) or given inline.
+*create* --title <title> --body-file <file> [--tag <name>]... [--task <item>]... [--format {markdown,groff}]
+	Create a note. The body is read from the file, or from stdin with _-_.
+	Each *--task* appends a _- [ ] item_ line. *--format groff* makes the
+	body raw groff source instead of markdown - the note's format is fixed at
+	creation and is never changed afterwards.
 
-*edit* <id>
-	Edit a note's content in the editor; never clobbers.
+*edit* [<id>] [--editor <cmd>] [--content-file <file>] [--dry-run]
+	Edit a note's content in the editor; never clobbers - a note that changed
+	underneath you is refused (409) and both versions are shown. With no id,
+	pick one interactively; *--no-pick* refuses instead. A groff note is
+	edited as raw groff source, and its format is left alone.
 
-*append* <id> <text...>, *prepend* <id> <text...>
+*append* <id> --body-file <file>, *prepend* <id> --body-file <file>
 	Add text to the end or beginning of a note.
 
-*set* <id> [<text...>]
-	Replace a note's title and/or content.
+*set* <id> [--title <title>] [--body-file <file>]
+	Replace a note's title and/or content. The note's format is never changed.
 
 *tag* <id> <name>, *untag* <id> <name>
 	Add or remove a tag.
@@ -56,7 +63,7 @@ reads _auth.work.json_.
 *versions* <id>
 	List a note's saved versions.
 
-*restore* <id> [<version>]
+*restore* <id> <version_id>
 	Restore a note's content from a saved version.
 
 *tags*
@@ -89,7 +96,7 @@ reads _auth.work.json_.
 # ENVIRONMENT
 
 *$EDITOR*, *$VISUAL*, *$NOTES_EDITOR*
-	Editor used by *create* and *edit*.
+	Editor used by *edit*.
 
 # SEE ALSO
 

@@ -55,8 +55,43 @@ class CreateTests(unittest.TestCase):
                           "--tag", "c++", "--tag", "ai"], c)
         self.assertEqual(rc, 0)
         self.assertEqual(c.writes, [("POST", "/notes",
-                                     {"title": "T", "content": "hello\n", "tags": [6, 5]})])
+                                     {"title": "T", "content": "hello\n",
+                                      "tags": [6, 5], "format": "markdown"})])
         self.assertIn("200", out)
+
+    def test_create_format_groff_is_sent_and_reported(self):
+        c = WriteClient()
+        rc, out, _ = run(["create", "--title", "Pancakes",
+                          "--body-file", body_file('.RECIPE "Pancakes"\n'),
+                          "--format", "groff"], c)
+        self.assertEqual(rc, 0)
+        self.assertEqual(c.writes, [("POST", "/notes",
+                                     {"title": "Pancakes",
+                                      "content": '.RECIPE "Pancakes"\n',
+                                      "tags": [], "format": "groff"})])
+        self.assertIn("[groff]", out)
+
+    def test_create_format_defaults_to_markdown(self):
+        c = WriteClient()
+        _, out, _ = run(["create", "--title", "T", "--body-file", body_file("x\n")], c)
+        self.assertEqual(c.writes[0][2]["format"], "markdown")
+        self.assertNotIn("[groff]", out)
+
+    def test_task_with_groff_is_refused_before_any_request(self):
+        c = WriteClient()
+        with self.assertRaises(notes.NotesError) as cm:
+            run(["create", "--title", "T", "--body-file", body_file("x\n"),
+                 "--format", "groff", "--task", "chop"], c)
+        self.assertIn("--task", str(cm.exception))
+        self.assertEqual(c.writes, [])
+
+    def test_unknown_format_is_rejected_by_the_parser(self):
+        c = WriteClient()
+        with self.assertRaises(SystemExit) as cm:
+            run(["create", "--title", "T", "--body-file", body_file("x\n"),
+                 "--format", "grolf"], c)
+        self.assertEqual(cm.exception.code, 2)
+        self.assertEqual(c.writes, [])
 
     def test_tag_name_resolution_cpp_is_6(self):
         c = WriteClient()

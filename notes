@@ -513,16 +513,21 @@ def put_note(client, note_id, title, content):
 
 
 def cmd_create(client, args):
+    if args.task and args.format != "markdown":
+        raise NotesError("--task writes markdown checkboxes, so it cannot be "
+                         "combined with --format " + args.format)
     content = read_body(args.body_file)
     if args.task:
         content = with_newline(content) + "".join(f"- [ ] {t}\n" for t in args.task)
     tag_ids = [find_tag_id(client, name) for name in args.tag or []]
     note = client.request("POST", "/notes",
-                          body={"title": args.title, "content": content, "tags": tag_ids})
+                          body={"title": args.title, "content": content,
+                                "tags": tag_ids, "format": args.format})
     if args.json:
         emit_json(client, note, args.json)
     else:
-        print(f"created note {(note or {}).get('id')}: {args.title}")
+        kind = "" if args.format == "markdown" else f" [{args.format}]"
+        print(f"created note {(note or {}).get('id')}: {args.title}{kind}")
     return 0
 
 
@@ -731,6 +736,9 @@ def build_parser():
     cp.add_argument("--tag", action="append", help="tag name (repeatable)")
     cp.add_argument("--task", action="append",
                     help="add a '- [ ] item' line to the content (repeatable)")
+    cp.add_argument("--format", choices=("markdown", "groff"), default="markdown",
+                    help="the note's kind: markdown (default), or groff whose "
+                         "content is raw groff source")
     cp.set_defaults(func=cmd_create)
     target("append", "append text to a note", with_body=True, body_required=True
            ).set_defaults(func=cmd_append)
@@ -756,7 +764,7 @@ def build_parser():
     return p
 
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 
 def main(argv=None):
